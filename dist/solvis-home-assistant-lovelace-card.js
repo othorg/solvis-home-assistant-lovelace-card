@@ -1,8 +1,9 @@
 /* Solvis Home Assistant Lovelace Card */
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
-const CARD_NAME = "Solvis Anlagenschema";
+const CARD_NAME = "Solvis Home Assistant Lovelace Card";
 const CARD_VERSION = "0.1.0";
+const CARD_ICON_URL = "/hacsfiles/solvis-home-assistant-lovelace-card/assets/solvis-icon.png";
 
 const DEFAULT_IMAGE_CANDIDATES = [
   "/hacsfiles/solvis-home-assistant-lovelace-card/assets/solvis-home-assistant-lovelace-card-base.jpg",
@@ -605,6 +606,8 @@ if (!window.customCards.some((card) => card.type === CARD_TYPE)) {
     type: CARD_TYPE,
     name: CARD_NAME,
     description: "Solvis system diagram card with auto-mapped entities from solvis_remote.",
+    icon: CARD_ICON_URL,
+    documentationURL: "https://github.com/othorg/solvis-home-assistant-lovelace-card",
     preview: true,
   });
 }

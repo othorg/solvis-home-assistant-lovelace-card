@@ -12,10 +12,15 @@ Custom Lovelace card for Home Assistant that renders a Solvis-style system diagr
 
 ## Installation (HACS)
 
-1. Add this repository as a custom frontend repository in HACS.
-2. Install **Solvis Home Assistant Lovelace Card**.
-3. Reload Home Assistant frontend.
-4. Add card in dashboard: `Solvis Home Assistant Lovelace Card`.
+1. Open `HACS`.
+2. Open menu (top-right 3 dots) -> `Custom repositories`.
+3. Repository URL:
+`https://github.com/othorg/solvis-home-assistant-lovelace-card`
+4. Category: `Dashboard`.
+5. Click `Add`.
+6. Search and install **Solvis Home Assistant Lovelace Card** in HACS.
+7. Reload Home Assistant frontend (or restart Home Assistant once).
+8. Add card in dashboard: `Solvis Home Assistant Lovelace Card`.
 
 ## Manual Resource (optional)
 
@@ -35,3 +40,11 @@ Use the Lovelace UI card editor.
 ## Card Type
 
 `custom:solvis-home-assistant-lovelace-card`
+
+## Icon
+
+The card ships with the same Solvis icon style used in `solvis-ha-integration`:
+
+- [assets/solvis-icon.png](assets/solvis-icon.png)
+
+This icon is exposed in the card metadata (`window.customCards`) and is used by Home Assistant where custom card icons are supported.

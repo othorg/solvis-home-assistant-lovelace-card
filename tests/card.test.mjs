@@ -499,3 +499,47 @@ test("manual fallback input updates entity mapping", () => {
 
   assert.equal(emittedConfig.entities.s10, "sensor.custom_temp");
 });
+
+test("overlay text size setting applies fixed font size", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  const style = {
+    values: {},
+    setProperty(name, value) {
+      this.values[name] = value;
+    },
+  };
+
+  card._wrapperEl = {
+    offsetWidth: 200,
+    style,
+  };
+
+  card._config = normalizeConfig({
+    type: `custom:${CARD_TYPE}`,
+    overlay_text_size: "large",
+  });
+  card._updateOverlayScale();
+  assert.equal(style.values["--overlay-font-size"], "14px");
+});
+
+test("text size change from editor updates config", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emittedConfig;
+  editor._emitConfig = (config) => {
+    emittedConfig = config;
+  };
+
+  editor._onTextSizeChanged({ target: { value: "small" } });
+  assert.equal(emittedConfig.overlay_text_size, "small");
+
+  editor._onTextSizeChanged({ target: { value: "invalid" } });
+  assert.equal(emittedConfig.overlay_text_size, "auto");
+});

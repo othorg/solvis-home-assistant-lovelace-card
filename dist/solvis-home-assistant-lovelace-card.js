@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.1.2";
+const CARD_VERSION = "0.1.3";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -70,6 +70,12 @@ const BINARY_OVERLAYS = [
 const SENSOR_KEYS = SENSOR_OVERLAYS.map((s) => s.key);
 const BINARY_KEYS = BINARY_OVERLAYS.map((b) => b.key);
 const ALL_KEYS = [...SENSOR_KEYS, ...BINARY_KEYS];
+const OVERLAY_TEXT_SIZE_OPTIONS = ["auto", "small", "medium", "large"];
+const OVERLAY_TEXT_SIZE_PIXELS = {
+  small: 10,
+  medium: 12,
+  large: 14,
+};
 
 function normalizeConfig(config) {
   const {
@@ -82,6 +88,7 @@ function normalizeConfig(config) {
     title: "Anlagenschema",
     image: "",
     system_id: "",
+    overlay_text_size: "auto",
     ...rest,
     entities: { ...(entities || {}) },
     binary_entities: { ...(binaryEntities || {}) },
@@ -382,9 +389,17 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   _updateOverlayScale() {
     if (!this._wrapperEl) return;
+    const configuredSize = this._config?.overlay_text_size || "auto";
     const width = this._wrapperEl.offsetWidth || 1080;
-    const ratio = Math.max(0.45, Math.min(1.2, width / 1080));
-    const fontPx = Math.max(8, Math.min(16, Math.round(12 * ratio * 10) / 10));
+    let fontPx;
+
+    if (configuredSize !== "auto" && OVERLAY_TEXT_SIZE_PIXELS[configuredSize]) {
+      fontPx = OVERLAY_TEXT_SIZE_PIXELS[configuredSize];
+    } else {
+      const ratio = Math.max(0.45, Math.min(1.2, width / 1080));
+      fontPx = Math.max(8, Math.min(16, Math.round(12 * ratio * 10) / 10));
+    }
+
     if (this._wrapperEl.style && typeof this._wrapperEl.style.setProperty === "function") {
       this._wrapperEl.style.setProperty("--overlay-font-size", `${fontPx}px`);
     } else if (this._wrapperEl.style) {
@@ -570,6 +585,13 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     this._emitConfig(next);
   };
 
+  _onTextSizeChanged = (ev) => {
+    const value = String(ev?.target?.value || "auto");
+    const next = normalizeConfig(this._config);
+    next.overlay_text_size = OVERLAY_TEXT_SIZE_OPTIONS.includes(value) ? value : "auto";
+    this._emitConfig(next);
+  };
+
   _onAutofill = () => {
     this._applyDefaultsForCurrentSystem({ onlyMissing: false, setSystemIfMissing: true });
   };
@@ -602,6 +624,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const target = ev?.target;
     if (!target || typeof target.id !== "string") return;
     if (target.id === "system") this._onSystemChanged(ev);
+    if (target.id === "text_size") this._onTextSizeChanged(ev);
   }
 
   _onEditorClick(ev) {
@@ -643,6 +666,9 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const safeTitle = escapeAttribute(this._config.title || "");
     const safeImage = escapeAttribute(this._config.image || "");
     const safeError = this._lastError ? escapeHtml(this._lastError) : "";
+    const textSize = OVERLAY_TEXT_SIZE_OPTIONS.includes(this._config.overlay_text_size)
+      ? this._config.overlay_text_size
+      : "auto";
 
     const hasEntityPicker = typeof customElements !== "undefined"
       && Boolean(customElements.get("ha-entity-picker"));
@@ -770,6 +796,15 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
               <label>Basisbild URL (optional)</label>
               <input id="image" type="text" value="${safeImage}" placeholder="/hacsfiles/.../solvis-home-assistant-lovelace-card-base.jpg" />
             </div>
+          </div>
+          <div class="field">
+            <label>Textgroesse Overlay</label>
+            <select id="text_size">
+              <option value="auto" ${textSize === "auto" ? "selected" : ""}>Auto</option>
+              <option value="small" ${textSize === "small" ? "selected" : ""}>Klein</option>
+              <option value="medium" ${textSize === "medium" ? "selected" : ""}>Mittel</option>
+              <option value="large" ${textSize === "large" ? "selected" : ""}>Gross</option>
+            </select>
           </div>
           <div class="grid2">
             <div class="field">

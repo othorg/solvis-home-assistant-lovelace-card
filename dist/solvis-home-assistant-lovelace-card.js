@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.15.0";
+const CARD_VERSION = "0.15.1";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -915,18 +915,19 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
   };
 
   _onEditorInput(ev) {
+    // Intentionally no-op: avoid re-render/focus loss on each keystroke in text inputs.
+  }
+
+  _onEditorChange(ev) {
     const target = ev?.target;
     if (!target) return;
     const group = target?.dataset?.group;
     const key = target?.dataset?.key;
     if (group && key && target.tagName === "INPUT") {
       this._onEntityChanged(group, key, target.value || "");
+      return;
     }
-  }
-
-  _onEditorChange(ev) {
-    const target = ev?.target;
-    if (!target || typeof target.id !== "string") return;
+    if (typeof target.id !== "string") return;
     if (target.id === "system") this._onSystemChanged(ev);
     if (target.id === "text_size") this._onTextSizeChanged(ev);
     if (target.id === "title") this._onTitleChanged(ev);

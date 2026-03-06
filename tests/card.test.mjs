@@ -509,7 +509,7 @@ test("editor renders manual input fallback when ha-entity-picker is unavailable"
   assert.match(html, /placeholder="binary_sensor\.entity_id"/);
 });
 
-test("manual fallback input updates entity mapping", () => {
+test("manual fallback entity input updates mapping on change", () => {
   const runtime = loadCardRuntime();
   const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
 
@@ -521,7 +521,7 @@ test("manual fallback input updates entity mapping", () => {
     emittedConfig = config;
   };
 
-  editor._onEditorInput({
+  editor._onEditorChange({
     target: {
       tagName: "INPUT",
       dataset: { group: "entities", key: "s10" },
@@ -531,6 +531,30 @@ test("manual fallback input updates entity mapping", () => {
   });
 
   assert.equal(emittedConfig.entities.s10, "sensor.custom_temp");
+});
+
+test("manual fallback entity input does not emit on each input keystroke", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emitCalls = 0;
+  editor._emitConfig = () => {
+    emitCalls += 1;
+  };
+
+  editor._onEditorInput({
+    target: {
+      tagName: "INPUT",
+      dataset: { group: "sensor_labels", key: "s10" },
+      value: "Aussen",
+      id: "",
+    },
+  });
+
+  assert.equal(emitCalls, 0);
 });
 
 test("title input does not emit config on each keystroke", () => {

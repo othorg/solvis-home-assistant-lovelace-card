@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file and in GitHub Re
 
 ## [Unreleased]
 
+### Changed
+- No changes yet.
+
+## [0.15.2] - 2026-03-06
+
 ### Added
 - Added direct interaction on overlay boxes: clicking a sensor/binary sensor value now opens the corresponding Home Assistant more-info dialog.
 - Added hover pointer feedback on clickable overlay boxes.

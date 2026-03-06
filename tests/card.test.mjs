@@ -539,13 +539,15 @@ test("manual fallback entity input does not emit on each input keystroke", () =>
 
   const editor = new SolvisHomeAssistantLovelaceCardEditor();
   editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._render();
 
   let emitCalls = 0;
   editor._emitConfig = () => {
     emitCalls += 1;
   };
 
-  editor._onEditorInput({
+  editor.shadowRoot.dispatchEvent({
+    type: "input",
     target: {
       tagName: "INPUT",
       dataset: { group: "sensor_labels", key: "s10" },
@@ -563,13 +565,15 @@ test("title input does not emit config on each keystroke", () => {
 
   const editor = new SolvisHomeAssistantLovelaceCardEditor();
   editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._render();
 
   let emitCalls = 0;
   editor._emitConfig = () => {
     emitCalls += 1;
   };
 
-  editor._onEditorInput({
+  editor.shadowRoot.dispatchEvent({
+    type: "input",
     target: {
       tagName: "INPUT",
       id: "title",

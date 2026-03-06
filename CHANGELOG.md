@@ -9,6 +9,20 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.15.3] - 2026-03-06
+
+### Fixed
+- Removed redundant canvas renders on card updates to avoid double rendering.
+- Removed unused editor `input` listener overhead while preserving stable focus behavior.
+- Unified grouped and ungrouped binary "off" styling for consistent visuals.
+
+### Changed
+- Added requestAnimationFrame-based canvas render scheduling to reduce render bursts on resize and updates.
+- Switched overlay hover handling from mouse events to pointer events for better cross-device behavior.
+- Improved binary state rendering with explicit `unavailable` handling (`-- label` + dashed border).
+- Added CSS-pixel coordinate clarification comment for click hit-testing with DPR-scaled canvas.
+- Simplified label placeholder construction in editor rendering.
+
 ## [0.15.2] - 2026-03-06
 
 ### Added

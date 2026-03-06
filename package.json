@@ -1,0 +1,8 @@
+{
+  "name": "solvis-home-assistant-lovelace-card",
+  "version": "0.1.1",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

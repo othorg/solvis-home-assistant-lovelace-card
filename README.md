@@ -45,6 +45,14 @@ Use the Lovelace UI card editor.
 
 `custom:solvis-home-assistant-lovelace-card`
 
+## Tests
+
+Run the lightweight Node.js test suite:
+
+```bash
+npm test
+```
+
 ## Icon
 
 The card ships with the same Solvis icon style used in `solvis-ha-integration`:

@@ -368,6 +368,12 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     this._registryLoaded = false;
     this._loadingRegistry = false;
     this._lastError = "";
+    this._editorEventsBound = false;
+
+    this._boundOnEditorInput = this._onEditorInput.bind(this);
+    this._boundOnEditorChange = this._onEditorChange.bind(this);
+    this._boundOnEditorClick = this._onEditorClick.bind(this);
+    this._boundOnPickerValueChanged = this._onPickerValueChanged.bind(this);
   }
 
   setConfig(config) {
@@ -377,8 +383,13 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const previous = this._hass;
     this._hass = hass;
-    this._render();
+    if (!previous) {
+      this._render();
+    } else {
+      this._updatePickerHass();
+    }
     this._ensureRegistryLoaded();
   }
 
@@ -500,6 +511,49 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     }
     this._emitConfig(next);
   };
+
+  _onEditorInput(ev) {
+    const target = ev?.target;
+    if (!target || typeof target.id !== "string") return;
+    if (target.id === "title") this._onTitleChanged(ev);
+    if (target.id === "image") this._onImageChanged(ev);
+  }
+
+  _onEditorChange(ev) {
+    const target = ev?.target;
+    if (!target || typeof target.id !== "string") return;
+    if (target.id === "system") this._onSystemChanged(ev);
+  }
+
+  _onEditorClick(ev) {
+    const target = ev?.target;
+    if (!target || typeof target.id !== "string") return;
+    if (target.id === "autofill") this._onAutofill();
+  }
+
+  _onPickerValueChanged(ev) {
+    const target = ev?.target;
+    const group = target?.dataset?.group;
+    const key = target?.dataset?.key;
+    if (!group || !key) return;
+    this._onEntityChanged(group, key, ev.detail?.value || "");
+  }
+
+  _ensureEditorEventHandlers() {
+    if (!this.shadowRoot || this._editorEventsBound) return;
+    this.shadowRoot.addEventListener("input", this._boundOnEditorInput);
+    this.shadowRoot.addEventListener("change", this._boundOnEditorChange);
+    this.shadowRoot.addEventListener("click", this._boundOnEditorClick);
+    this.shadowRoot.addEventListener("value-changed", this._boundOnPickerValueChanged);
+    this._editorEventsBound = true;
+  }
+
+  _updatePickerHass() {
+    if (!this.shadowRoot || !this._hass) return;
+    for (const picker of this.shadowRoot.querySelectorAll("ha-entity-picker")) {
+      picker.hass = this._hass;
+    }
+  }
 
   _render() {
     if (!this.shadowRoot) return;
@@ -663,15 +717,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       </div>
     `;
 
-    const titleInput = this.shadowRoot.querySelector("#title");
-    const imageInput = this.shadowRoot.querySelector("#image");
-    const systemSelect = this.shadowRoot.querySelector("#system");
-    const autofillBtn = this.shadowRoot.querySelector("#autofill");
-
-    if (titleInput) titleInput.addEventListener("input", this._onTitleChanged);
-    if (imageInput) imageInput.addEventListener("input", this._onImageChanged);
-    if (systemSelect) systemSelect.addEventListener("change", this._onSystemChanged);
-    if (autofillBtn) autofillBtn.addEventListener("click", this._onAutofill);
+    this._ensureEditorEventHandlers();
 
     for (const picker of this.shadowRoot.querySelectorAll("ha-entity-picker")) {
       const group = picker.dataset.group;
@@ -685,13 +731,17 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       picker.includeDomains = includeDomains;
       picker.value = value;
       picker.allowCustomEntity = true;
-      picker.addEventListener("value-changed", (ev) => {
-        this._onEntityChanged(group, key, ev.detail?.value || "");
-      });
     }
   }
 
   disconnectedCallback() {
+    if (this.shadowRoot && this._editorEventsBound) {
+      this.shadowRoot.removeEventListener("input", this._boundOnEditorInput);
+      this.shadowRoot.removeEventListener("change", this._boundOnEditorChange);
+      this.shadowRoot.removeEventListener("click", this._boundOnEditorClick);
+      this.shadowRoot.removeEventListener("value-changed", this._boundOnPickerValueChanged);
+      this._editorEventsBound = false;
+    }
     this._hass = undefined;
   }
 }
@@ -717,3 +767,13 @@ if (!window.customCards.some((card) => card.type === CARD_TYPE)) {
 }
 
 console.info(`%c${CARD_NAME} %c${CARD_VERSION}`, "color:#0b75b7;font-weight:700", "color:#666;font-weight:400");
+
+if (typeof process !== "undefined" && process?.env?.SOLVIS_CARD_TEST === "1") {
+  globalThis.__SOLVIS_CARD_TEST__ = {
+    CARD_TYPE,
+    normalizeConfig,
+    buildSystemEntityMap,
+    SolvisHomeAssistantLovelaceCard,
+    SolvisHomeAssistantLovelaceCardEditor,
+  };
+}

@@ -40,6 +40,8 @@ Use the Lovelace UI card editor.
 - No manual YAML entity mapping required.
 - Defaults are auto-loaded from `solvis_remote` entities.
 - You can override every mapped sensor/binary sensor in the editor.
+- If the base image is not shown in your installation, set `Basisbild URL` explicitly in the card editor, for example:
+`/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg`
 
 ## Card Type
 

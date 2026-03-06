@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.1.3";
+const CARD_VERSION = "0.1.4";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -76,6 +76,17 @@ const OVERLAY_TEXT_SIZE_PIXELS = {
   medium: 12,
   large: 14,
 };
+
+const SENSOR_OVERLAY_BY_KEY = new Map(SENSOR_OVERLAYS.map((overlay) => [overlay.key, overlay]));
+const BINARY_OVERLAY_BY_KEY = new Map(BINARY_OVERLAYS.map((overlay) => [overlay.key, overlay]));
+
+// Pixel fine-tuning groups (requested UX):
+// - left solar block: right aligned on red frame
+// - right warmwater/heating blocks: left aligned on blue frame
+const SOLAR_GROUP_KEYS = ["a1", "slv", "sev", "s17", "s8"];
+const RIGHT_GROUP_KEYS = ["a2", "s2", "a5", "s11", "a3", "s12"];
+const SOLAR_GROUP_ANCHOR_X_REL = 0.347;
+const RIGHT_GROUP_ANCHOR_X_REL = 0.632;
 
 function normalizeConfig(config) {
   const {
@@ -394,6 +405,8 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       textStyle,
       padX,
       padY,
+      fixedWidth,
+      align = "center",
     } = options;
 
     const metrics = ctx.measureText(text);
@@ -402,9 +415,16 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     const textWidth = metrics.width;
     const textHeight = ascent + descent;
 
-    const boxX = x - (textWidth / 2) - padX;
+    const boxW = fixedWidth ?? (textWidth + (padX * 2));
+    let boxX;
+    if (align === "right") {
+      boxX = x - boxW;
+    } else if (align === "left") {
+      boxX = x;
+    } else {
+      boxX = x - (boxW / 2);
+    }
     const boxY = y - (textHeight / 2) - padY;
-    const boxW = textWidth + (padX * 2);
     const boxH = textHeight + (padY * 2);
 
     ctx.fillStyle = fillStyle;
@@ -416,7 +436,60 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     ctx.fillStyle = textStyle;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, x, y);
+    const textX = boxX + (boxW / 2);
+    ctx.fillText(text, textX, y);
+  }
+
+  _buildGroupedEntry(key) {
+    const sensorOverlay = SENSOR_OVERLAY_BY_KEY.get(key);
+    if (sensorOverlay) {
+      return {
+        key,
+        yRel: sensorOverlay.relPos[1],
+        text: this._formatSensorOverlayText(sensorOverlay),
+        isBinary: false,
+      };
+    }
+
+    const binaryOverlay = BINARY_OVERLAY_BY_KEY.get(key);
+    if (binaryOverlay) {
+      return {
+        key,
+        yRel: binaryOverlay.relPos[1],
+        text: this._resolveBinaryLabel(binaryOverlay),
+        isBinary: true,
+        isOn: this._isBinaryOn(binaryOverlay),
+      };
+    }
+    return null;
+  }
+
+  _drawGroupedAlignedBoxes(ctx, width, height, entries, anchorXRel, align) {
+    if (!entries.length) return;
+
+    const padX = Math.max(4, Math.round(this._overlayFontPx * 0.50));
+    const padY = Math.max(2, Math.round(this._overlayFontPx * 0.25));
+    let maxTextWidth = 0;
+    for (const entry of entries) {
+      maxTextWidth = Math.max(maxTextWidth, ctx.measureText(entry.text).width);
+    }
+    const fixedWidth = Math.ceil(maxTextWidth + (padX * 2));
+    const anchorX = anchorXRel * width;
+
+    for (const entry of entries) {
+      const y = entry.yRel * height;
+      const isOn = entry.isBinary && entry.isOn;
+
+      this._drawLabeledBox(ctx, anchorX, y, entry.text, {
+        fillStyle: isOn ? "rgba(170,235,145,0.85)" : "rgba(255,255,255,0.78)",
+        strokeStyle: isOn ? "rgba(85,150,70,0.85)" : "rgba(92,92,92,0.45)",
+        textStyle: isOn ? "rgba(33,80,31,0.96)" : "rgba(28,28,28,0.95)",
+        padX,
+        padY,
+        fixedWidth,
+        align,
+      });
+    }
   }
 
   _renderOverlayCanvas() {
@@ -441,12 +514,42 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     ctx.font = `600 ${this._overlayFontPx}px "DejaVu Sans", Arial, sans-serif`;
     ctx.imageSmoothingEnabled = true;
 
+    const groupedDrawnKeys = new Set();
+    const solarEntries = SOLAR_GROUP_KEYS
+      .map((key) => this._buildGroupedEntry(key))
+      .filter((entry) => entry !== null);
+    const rightEntries = RIGHT_GROUP_KEYS
+      .map((key) => this._buildGroupedEntry(key))
+      .filter((entry) => entry !== null);
+
+    this._drawGroupedAlignedBoxes(
+      ctx,
+      width,
+      height,
+      solarEntries,
+      SOLAR_GROUP_ANCHOR_X_REL,
+      "right",
+    );
+    this._drawGroupedAlignedBoxes(
+      ctx,
+      width,
+      height,
+      rightEntries,
+      RIGHT_GROUP_ANCHOR_X_REL,
+      "left",
+    );
+
+    for (const entry of [...solarEntries, ...rightEntries]) {
+      groupedDrawnKeys.add(entry.key);
+    }
+
     const sensorPadX = Math.max(3, Math.round(this._overlayFontPx * 0.45));
     const sensorPadY = Math.max(2, Math.round(this._overlayFontPx * 0.28));
     const binaryPadX = Math.max(4, Math.round(this._overlayFontPx * 0.55));
     const binaryPadY = Math.max(2, Math.round(this._overlayFontPx * 0.25));
 
     for (const overlay of SENSOR_OVERLAYS) {
+      if (groupedDrawnKeys.has(overlay.key)) continue;
       const text = this._formatSensorOverlayText(overlay);
       const x = overlay.relPos[0] * width;
       const y = overlay.relPos[1] * height;
@@ -460,6 +563,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     }
 
     for (const overlay of BINARY_OVERLAYS) {
+      if (groupedDrawnKeys.has(overlay.key)) continue;
       const isOn = this._isBinaryOn(overlay);
       const label = this._resolveBinaryLabel(overlay);
       const x = overlay.relPos[0] * width;
@@ -662,10 +766,6 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
   _onEditorInput(ev) {
     const target = ev?.target;
     if (!target) return;
-    if (typeof target.id === "string") {
-      if (target.id === "title") this._onTitleChanged(ev);
-      if (target.id === "image") this._onImageChanged(ev);
-    }
     const group = target?.dataset?.group;
     const key = target?.dataset?.key;
     if (group && key && target.tagName === "INPUT") {
@@ -678,6 +778,8 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     if (!target || typeof target.id !== "string") return;
     if (target.id === "system") this._onSystemChanged(ev);
     if (target.id === "text_size") this._onTextSizeChanged(ev);
+    if (target.id === "title") this._onTitleChanged(ev);
+    if (target.id === "image") this._onImageChanged(ev);
   }
 
   _onEditorClick(ev) {

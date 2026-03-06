@@ -533,6 +533,55 @@ test("manual fallback input updates entity mapping", () => {
   assert.equal(emittedConfig.entities.s10, "sensor.custom_temp");
 });
 
+test("title input does not emit config on each keystroke", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emitCalls = 0;
+  editor._emitConfig = () => {
+    emitCalls += 1;
+  };
+
+  editor._onEditorInput({
+    target: {
+      tagName: "INPUT",
+      id: "title",
+      dataset: {},
+      value: "Anlage",
+    },
+  });
+
+  assert.equal(emitCalls, 0);
+});
+
+test("title change updates config exactly once", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emittedConfig;
+  let emitCalls = 0;
+  editor._emitConfig = (config) => {
+    emitCalls += 1;
+    emittedConfig = config;
+  };
+
+  editor._onEditorChange({
+    target: {
+      id: "title",
+      value: "Mein Schema",
+    },
+  });
+
+  assert.equal(emitCalls, 1);
+  assert.equal(emittedConfig.title, "Mein Schema");
+});
+
 test("overlay text size setting applies fixed font size", () => {
   const runtime = loadCardRuntime();
   const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCard } = runtime;
@@ -616,4 +665,78 @@ test("editor includes sensor picker datalist options from hass states", () => {
   assert.match(html, /datalist id="sensor-entity-options"/);
   assert.match(html, /value="sensor\.one"/);
   assert.match(html, /value="sensor\.two"/);
+});
+
+test("title field is a plain text input without datalist lookup", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /<input id="title" type="text" value="[^"]*"\s*\/>/);
+  assert.doesNotMatch(html, /<input id="title"[^>]*\slist="/);
+});
+
+test("drawLabeledBox respects left/right/center alignment for fixed width", () => {
+  const runtime = loadCardRuntime();
+  const { SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card._overlayFontPx = 12;
+
+  const calls = [];
+  const ctx = {
+    measureText() {
+      return {
+        width: 20,
+        actualBoundingBoxAscent: 8,
+        actualBoundingBoxDescent: 2,
+      };
+    },
+    fillRect() {},
+    strokeRect(x, y, w, h) {
+      calls.push({ x, y, w, h });
+    },
+    fillText() {},
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 1,
+    textAlign: "center",
+    textBaseline: "middle",
+  };
+
+  card._drawLabeledBox(ctx, 100, 50, "X", {
+    fillStyle: "#fff",
+    strokeStyle: "#000",
+    textStyle: "#000",
+    padX: 4,
+    padY: 2,
+    fixedWidth: 40,
+    align: "left",
+  });
+  card._drawLabeledBox(ctx, 100, 50, "X", {
+    fillStyle: "#fff",
+    strokeStyle: "#000",
+    textStyle: "#000",
+    padX: 4,
+    padY: 2,
+    fixedWidth: 40,
+    align: "right",
+  });
+  card._drawLabeledBox(ctx, 100, 50, "X", {
+    fillStyle: "#fff",
+    strokeStyle: "#000",
+    textStyle: "#000",
+    padX: 4,
+    padY: 2,
+    fixedWidth: 40,
+    align: "center",
+  });
+
+  assert.equal(calls[0].x, 100); // left aligned
+  assert.equal(calls[1].x, 60); // right aligned
+  assert.equal(calls[2].x, 80); // centered
 });

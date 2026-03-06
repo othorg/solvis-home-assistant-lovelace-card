@@ -27,6 +27,14 @@ https://github.com/othorg/solvis-ha-integration
 7. Reload Home Assistant frontend (or restart Home Assistant once).
 8. Add card in dashboard: `Solvis Home Assistant Lovelace Card`.
 
+## Release Notes in HA (HACS)
+
+When a new tagged release is published, HACS can show the release notes in the update dialog.
+
+- Release notes source: GitHub Releases  
+  https://github.com/othorg/solvis-home-assistant-lovelace-card/releases
+- This repository contains an automated workflow that creates GitHub Releases with generated notes from commits when a tag (`v*`) is pushed.
+
 ## Manual Resource (optional)
 
 If needed, add resource manually:
@@ -64,6 +72,17 @@ Run the lightweight Node.js test suite:
 ```bash
 npm test
 ```
+
+## Maintainer Release Flow
+
+To publish an update with visible release notes in HACS:
+
+1. Update version in:
+`package.json` and `dist/solvis-home-assistant-lovelace-card.js` (`CARD_VERSION`).
+2. Commit and push to `main`.
+3. Create and push a semver tag:
+`git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z`
+4. GitHub Actions creates the Release with generated notes from commits.
 
 ## Icon
 

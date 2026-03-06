@@ -646,6 +646,74 @@ test("sensor label override is applied in overlay text", () => {
   assert.equal(text, "12.3°C AT");
 });
 
+test("card uses english default title for non-german locales", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({ type: `custom:${CARD_TYPE}` });
+  card.hass = {
+    locale: { language: "en-US" },
+    states: {},
+  };
+
+  assert.equal(card._cardEl?.header, "System diagram");
+});
+
+test("card uses german default title for german locales", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({ type: `custom:${CARD_TYPE}` });
+  card.hass = {
+    locale: { language: "de-DE" },
+    states: {},
+  };
+
+  assert.equal(card._cardEl?.header, "Anlagenschema");
+});
+
+test("editor renders english labels for non-german locales", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._hass = {
+    locale: { language: "en-GB" },
+    states: {},
+  };
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /<h3>General<\/h3>/);
+  assert.match(html, /<h3>Sensors \(values\)<\/h3>/);
+  assert.match(html, /<h3>Binary sensors \(status\)<\/h3>/);
+  assert.match(html, /S10 - Outdoor temperature/);
+  assert.match(html, /A12 - Reheating/);
+});
+
+test("editor renders german labels for german locales", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._hass = {
+    locale: { language: "de-DE" },
+    states: {},
+  };
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /<h3>Allgemein<\/h3>/);
+  assert.match(html, /<h3>Sensoren \(Werte\)<\/h3>/);
+  assert.match(html, /<h3>Binärsensoren \(Status\)<\/h3>/);
+  assert.match(html, /S10 - Aussentemperatur/);
+  assert.match(html, /A12 - Nachheizung/);
+});
+
 test("editor includes sensor picker datalist options from hass states", () => {
   const runtime = loadCardRuntime();
   const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
@@ -663,8 +731,10 @@ test("editor includes sensor picker datalist options from hass states", () => {
 
   const html = editor.shadowRoot.innerHTML;
   assert.match(html, /datalist id="sensor-entity-options"/);
+  assert.match(html, /datalist id="binary-entity-options"/);
   assert.match(html, /value="sensor\.one"/);
   assert.match(html, /value="sensor\.two"/);
+  assert.match(html, /value="binary_sensor\.pump"/);
 });
 
 test("title field is a plain text input without datalist lookup", () => {
@@ -678,6 +748,22 @@ test("title field is a plain text input without datalist lookup", () => {
   const html = editor.shadowRoot.innerHTML;
   assert.match(html, /<input id="title" type="text" value="[^"]*"\s*\/>/);
   assert.doesNotMatch(html, /<input id="title"[^>]*\slist="/);
+});
+
+test("only entity fields use lookup; label fields stay plain text", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /data-group="entities"[^>]*\slist="sensor-entity-options"/);
+  assert.match(html, /data-group="binary_entities"[^>]*\slist="binary-entity-options"/);
+  assert.match(html, /data-group="binary_entities"[^>]*placeholder="binary_sensor\.entity_id"/);
+  assert.doesNotMatch(html, /data-group="sensor_labels"[^>]*\slist="/);
+  assert.doesNotMatch(html, /data-group="binary_labels"[^>]*\slist="/);
 });
 
 test("drawLabeledBox respects left/right/center alignment for fixed width", () => {

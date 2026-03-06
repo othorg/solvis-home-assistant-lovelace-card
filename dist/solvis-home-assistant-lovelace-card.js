@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.1.4";
+const CARD_VERSION = "0.15.0";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -77,6 +77,101 @@ const OVERLAY_TEXT_SIZE_PIXELS = {
   large: 14,
 };
 
+const I18N = {
+  de: {
+    default_title: "Anlagenschema",
+    image_alt: "Solvis Anlagenschema",
+    general: "Allgemein",
+    title: "Titel",
+    base_image_url_optional: "Basisbild URL (optional)",
+    overlay_text_size: "Textgroesse Overlay",
+    size_auto: "Auto",
+    size_small: "Klein",
+    size_medium: "Mittel",
+    size_large: "Gross",
+    system_auto_detected: "Solvis Anlage (auto erkannt)",
+    no_system_found: "Keine Solvis Anlage automatisch gefunden",
+    load_defaults: "Default-Werte aus Solvis laden",
+    entities_notice_before: "Entitäten werden automatisch aus ",
+    entities_notice_after: " vorbelegt und können unten einzeln überschrieben werden.",
+    loading_entities: "Solvis Entitäten werden geladen...",
+    auto_discovery_failed: "Auto-Erkennung fehlgeschlagen",
+    sensors_values: "Sensoren (Werte)",
+    binary_sensors_status: "Binärsensoren (Status)",
+    label_placeholder: "Bezeichner (Standard: {default})",
+  },
+  en: {
+    default_title: "System diagram",
+    image_alt: "Solvis system diagram",
+    general: "General",
+    title: "Title",
+    base_image_url_optional: "Base image URL (optional)",
+    overlay_text_size: "Overlay text size",
+    size_auto: "Auto",
+    size_small: "Small",
+    size_medium: "Medium",
+    size_large: "Large",
+    system_auto_detected: "Solvis system (auto detected)",
+    no_system_found: "No Solvis system detected automatically",
+    load_defaults: "Load default values from Solvis",
+    entities_notice_before: "Entities are prefilled from ",
+    entities_notice_after: " and can be overridden below.",
+    loading_entities: "Loading Solvis entities...",
+    auto_discovery_failed: "Auto-discovery failed",
+    sensors_values: "Sensors (values)",
+    binary_sensors_status: "Binary sensors (status)",
+    label_placeholder: "Label (default: {default})",
+  },
+};
+
+const SENSOR_NAME_I18N = {
+  de: {
+    s10: "Aussentemperatur",
+    s1: "Speicher oben",
+    s4: "Speicher Nachheizung",
+    s9: "Speicher Mitte",
+    s3: "Speicher unten",
+    slv: "Solarleistung",
+    sev: "Solarertrag",
+    s17: "Durchfluss Solar",
+    s8: "Kollektortemperatur",
+    s2: "Warmwasser",
+    s11: "Zirkulation",
+    s12: "Heizkreis Vorlauf",
+  },
+  en: {
+    s10: "Outdoor temperature",
+    s1: "Storage top",
+    s4: "Storage reheating",
+    s9: "Storage middle",
+    s3: "Storage bottom",
+    slv: "Solar power",
+    sev: "Solar yield",
+    s17: "Solar flow",
+    s8: "Collector temperature",
+    s2: "Hot water",
+    s11: "Circulation",
+    s12: "Heating circuit flow",
+  },
+};
+
+const BINARY_NAME_I18N = {
+  de: {
+    a12: "Nachheizung",
+    a1: "Solaranlage",
+    a2: "Warmwasser",
+    a5: "Zirkulation",
+    a3: "Heizkreis 1",
+  },
+  en: {
+    a12: "Reheating",
+    a1: "Solar system",
+    a2: "Hot water",
+    a5: "Circulation",
+    a3: "Heating circuit 1",
+  },
+};
+
 const SENSOR_OVERLAY_BY_KEY = new Map(SENSOR_OVERLAYS.map((overlay) => [overlay.key, overlay]));
 const BINARY_OVERLAY_BY_KEY = new Map(BINARY_OVERLAYS.map((overlay) => [overlay.key, overlay]));
 
@@ -88,6 +183,23 @@ const RIGHT_GROUP_KEYS = ["a2", "s2", "a5", "s11", "a3", "s12"];
 const SOLAR_GROUP_ANCHOR_X_REL = 0.347;
 const RIGHT_GROUP_ANCHOR_X_REL = 0.632;
 
+function resolveLanguage(hass) {
+  const raw = String(hass?.locale?.language || hass?.language || "").toLowerCase();
+  return raw.startsWith("de") ? "de" : "en";
+}
+
+function t(lang, key) {
+  return I18N[lang]?.[key] || I18N.en[key] || key;
+}
+
+function localizeSensorName(lang, key, fallback = "") {
+  return SENSOR_NAME_I18N[lang]?.[key] || SENSOR_NAME_I18N.en[key] || fallback || key.toUpperCase();
+}
+
+function localizeBinaryName(lang, key, fallback = "") {
+  return BINARY_NAME_I18N[lang]?.[key] || BINARY_NAME_I18N.en[key] || fallback || key.toUpperCase();
+}
+
 function normalizeConfig(config) {
   const {
     entities,
@@ -96,7 +208,7 @@ function normalizeConfig(config) {
   } = config || {};
   return {
     type: `custom:${CARD_TYPE}`,
-    title: "Anlagenschema",
+    title: "",
     image: "",
     system_id: "",
     overlay_text_size: "auto",
@@ -181,7 +293,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   static getStubConfig() {
     return {
       type: `custom:${CARD_TYPE}`,
-      title: "Anlagenschema",
+      title: "",
     };
   }
 
@@ -208,7 +320,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   set hass(hass) {
     const previous = this._hass;
     this._hass = hass;
-    if (!previous || this._hasRelevantStateChanges(previous, hass)) {
+    const previousLang = resolveLanguage(previous);
+    const nextLang = resolveLanguage(hass);
+    if (!previous || previousLang !== nextLang || this._hasRelevantStateChanges(previous, hass)) {
       this._render();
     }
   }
@@ -219,6 +333,22 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     const imageHeight = this._wrapperEl?.offsetHeight || ((width * 720) / 1080);
     const headerHeight = 56;
     return Math.max(6, Math.ceil((imageHeight + headerHeight) / 50));
+  }
+
+  _lang() {
+    return resolveLanguage(this._hass);
+  }
+
+  _t(key) {
+    return t(this._lang(), key);
+  }
+
+  _defaultSensorName(key, fallback = "") {
+    return localizeSensorName(this._lang(), key, fallback);
+  }
+
+  _defaultBinaryName(key, fallback = "") {
+    return localizeBinaryName(this._lang(), key, fallback);
   }
 
   _resolveImageUrl() {
@@ -257,7 +387,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   _resolveBinaryLabel(overlay) {
     const custom = this._config.binary_labels?.[overlay.key];
     const label = String(custom ?? "").trim();
-    return label || overlay.text;
+    return label || this._defaultBinaryName(overlay.key, overlay.text);
   }
 
   _formatSensorOverlayText(overlay) {
@@ -352,7 +482,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="wrapper">
-          <img class="base" alt="Solvis Anlagenschema" />
+          <img class="base" alt="" />
           <canvas class="overlay-canvas"></canvas>
         </div>
       </ha-card>
@@ -581,10 +711,13 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   _updateCardDom() {
     if (!this._domReady) return;
 
-    const title = this._config.title || "Anlagenschema";
+    const title = this._config.title || this._t("default_title");
     if (this._cardEl) {
       this._cardEl.header = title;
       this._cardEl.setAttribute("header", title);
+    }
+    if (this._imgEl) {
+      this._imgEl.alt = this._t("image_alt");
     }
 
     const imageUrl = this._resolveImageUrl();
@@ -630,12 +763,30 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
   set hass(hass) {
     const previous = this._hass;
     this._hass = hass;
-    if (!previous) {
+    const previousLang = resolveLanguage(previous);
+    const nextLang = resolveLanguage(hass);
+    if (!previous || previousLang !== nextLang) {
       this._render();
     } else {
       this._updatePickerHass();
     }
     this._ensureRegistryLoaded();
+  }
+
+  _lang() {
+    return resolveLanguage(this._hass);
+  }
+
+  _t(key) {
+    return t(this._lang(), key);
+  }
+
+  _defaultSensorName(key, fallback = "") {
+    return localizeSensorName(this._lang(), key, fallback);
+  }
+
+  _defaultBinaryName(key, fallback = "") {
+    return localizeBinaryName(this._lang(), key, fallback);
   }
 
   async _ensureRegistryLoaded() {
@@ -650,7 +801,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       this._applyDefaultsForCurrentSystem({ onlyMissing: true, setSystemIfMissing: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this._lastError = `Auto-Erkennung fehlgeschlagen: ${message}`;
+      this._lastError = `${this._t("auto_discovery_failed")}: ${message}`;
     } finally {
       this._loadingRegistry = false;
       this._render();
@@ -831,20 +982,21 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const binaryEntityIds = this._hass?.states
       ? Object.keys(this._hass.states).filter((entityId) => entityId.startsWith("binary_sensor.")).sort()
       : [];
-
+    const labelPlaceholderSensor = this._t("label_placeholder").replace("{default}", "{default}");
+    const labelPlaceholderBinary = this._t("label_placeholder").replace("{default}", "{default}");
     const sensorRows = SENSOR_OVERLAYS.map((overlay) => `
       <div class="row">
-        <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(overlay.name)}</div>
+        <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(this._defaultSensorName(overlay.key, overlay.name))}</div>
         <input type="text" data-group="entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.entities?.[overlay.key] || "")}" placeholder="sensor.entity_id" list="sensor-entity-options" />
-        <input type="text" data-group="sensor_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.sensor_labels?.[overlay.key] || "")}" placeholder="Bezeichner (Standard: ${escapeAttribute(overlay.label)})" />
+        <input type="text" data-group="sensor_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.sensor_labels?.[overlay.key] || "")}" placeholder="${escapeAttribute(labelPlaceholderSensor.replace("{default}", overlay.label))}" />
       </div>
     `).join("");
 
     const binaryRows = BINARY_OVERLAYS.map((overlay) => `
       <div class="row">
-        <div class="label">${escapeHtml(overlay.key.toUpperCase())} - ${escapeHtml(overlay.text)}</div>
+        <div class="label">${escapeHtml(overlay.key.toUpperCase())} - ${escapeHtml(this._defaultBinaryName(overlay.key, overlay.text))}</div>
         <input type="text" data-group="binary_entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_entities?.[overlay.key] || "")}" placeholder="binary_sensor.entity_id" list="binary-entity-options" />
-        <input type="text" data-group="binary_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_labels?.[overlay.key] || "")}" placeholder="Bezeichner (Standard: ${escapeAttribute(overlay.text)})" />
+        <input type="text" data-group="binary_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_labels?.[overlay.key] || "")}" placeholder="${escapeAttribute(labelPlaceholderBinary.replace("{default}", this._defaultBinaryName(overlay.key, overlay.text)))}" />
       </div>
     `).join("");
 
@@ -943,48 +1095,48 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
       <div class="editor">
         <div class="block">
-          <h3>Allgemein</h3>
+          <h3>${escapeHtml(this._t("general"))}</h3>
           <div class="grid2">
             <div class="field">
-              <label>Titel</label>
+              <label>${escapeHtml(this._t("title"))}</label>
               <input id="title" type="text" value="${safeTitle}" />
             </div>
             <div class="field">
-              <label>Basisbild URL (optional)</label>
+              <label>${escapeHtml(this._t("base_image_url_optional"))}</label>
               <input id="image" type="text" value="${safeImage}" placeholder="/hacsfiles/.../solvis-home-assistant-lovelace-card-base.jpg" />
             </div>
           </div>
           <div class="field">
-            <label>Textgroesse Overlay</label>
+            <label>${escapeHtml(this._t("overlay_text_size"))}</label>
             <select id="text_size">
-              <option value="auto" ${textSize === "auto" ? "selected" : ""}>Auto</option>
-              <option value="small" ${textSize === "small" ? "selected" : ""}>Klein</option>
-              <option value="medium" ${textSize === "medium" ? "selected" : ""}>Mittel</option>
-              <option value="large" ${textSize === "large" ? "selected" : ""}>Gross</option>
+              <option value="auto" ${textSize === "auto" ? "selected" : ""}>${escapeHtml(this._t("size_auto"))}</option>
+              <option value="small" ${textSize === "small" ? "selected" : ""}>${escapeHtml(this._t("size_small"))}</option>
+              <option value="medium" ${textSize === "medium" ? "selected" : ""}>${escapeHtml(this._t("size_medium"))}</option>
+              <option value="large" ${textSize === "large" ? "selected" : ""}>${escapeHtml(this._t("size_large"))}</option>
             </select>
           </div>
           <div class="grid2">
             <div class="field">
-              <label>Solvis Anlage (auto erkannt)</label>
+              <label>${escapeHtml(this._t("system_auto_detected"))}</label>
               ${hasSystems ? `
                 <select id="system">
                   ${systems.map((s) => `<option value="${escapeAttribute(s)}" ${s === selectedSystem ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
                 </select>
               ` : `
-                <input type="text" value="Keine Solvis Anlage automatisch gefunden" disabled />
+                <input type="text" value="${escapeAttribute(this._t("no_system_found"))}" disabled />
               `}
             </div>
             <div class="field" style="align-content:end;">
-              <button id="autofill" type="button" ${hasSystems ? "" : "disabled"}>Default-Werte aus Solvis laden</button>
+              <button id="autofill" type="button" ${hasSystems ? "" : "disabled"}>${escapeHtml(this._t("load_defaults"))}</button>
             </div>
           </div>
-          <div class="notice">Entitäten werden automatisch aus <code>solvis_remote</code> vorbelegt und können unten einzeln überschrieben werden.</div>
-          ${this._loadingRegistry ? '<div class="notice">Solvis Entitäten werden geladen...</div>' : ""}
+          <div class="notice">${escapeHtml(this._t("entities_notice_before"))}<code>solvis_remote</code>${escapeHtml(this._t("entities_notice_after"))}</div>
+          ${this._loadingRegistry ? `<div class="notice">${escapeHtml(this._t("loading_entities"))}</div>` : ""}
           ${safeError ? `<div class="error">${safeError}</div>` : ""}
         </div>
 
         <div class="block">
-          <h3>Sensoren (Werte)</h3>
+          <h3>${escapeHtml(this._t("sensors_values"))}</h3>
           <datalist id="sensor-entity-options">
             ${sensorEntityIds.map((entityId) => `<option value="${escapeAttribute(entityId)}"></option>`).join("")}
           </datalist>
@@ -992,7 +1144,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
         </div>
 
         <div class="block">
-          <h3>Binärsensoren (Status)</h3>
+          <h3>${escapeHtml(this._t("binary_sensors_status"))}</h3>
           <datalist id="binary-entity-options">
             ${binaryEntityIds.map((entityId) => `<option value="${escapeAttribute(entityId)}"></option>`).join("")}
           </datalist>

@@ -40,22 +40,36 @@ const BINARY_KEYS = BINARY_OVERLAYS.map((b) => b.key);
 const ALL_KEYS = [...SENSOR_KEYS, ...BINARY_KEYS];
 
 function normalizeConfig(config) {
+  const {
+    entities,
+    binary_entities: binaryEntities,
+    ...rest
+  } = config || {};
   return {
     type: `custom:${CARD_TYPE}`,
     title: "Anlagenschema",
     image: "",
     system_id: "",
-    entities: {},
-    binary_entities: {},
-    ...config,
-    entities: { ...(config?.entities || {}) },
-    binary_entities: { ...(config?.binary_entities || {}) },
+    ...rest,
+    entities: { ...(entities || {}) },
+    binary_entities: { ...(binaryEntities || {}) },
   };
 }
 
 function clampImageIdx(value) {
   return Math.max(0, Math.min(DEFAULT_IMAGE_CANDIDATES.length - 1, value));
 }
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const escapeAttribute = escapeHtml;
 
 function isStateUnavailable(stateObj) {
   if (!stateObj) return true;
@@ -124,8 +138,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   set hass(hass) {
+    const previous = this._hass;
     this._hass = hass;
-    this._render();
+    if (!previous || this._hasRelevantStateChanges(previous, hass)) {
+      this._render();
+    }
   }
 
   getCardSize() {
@@ -174,17 +191,46 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     return String(stateObj.state).toLowerCase() === "on";
   }
 
+  _trackedEntityIds() {
+    const ids = new Set();
+    for (const entityId of Object.values(this._config.entities || {})) {
+      if (entityId) ids.add(entityId);
+    }
+    for (const entityId of Object.values(this._config.binary_entities || {})) {
+      if (entityId) ids.add(entityId);
+    }
+    return [...ids];
+  }
+
+  _hasRelevantStateChanges(previousHass, nextHass) {
+    for (const entityId of this._trackedEntityIds()) {
+      const before = previousHass?.states?.[entityId]?.state ?? null;
+      const after = nextHass?.states?.[entityId]?.state ?? null;
+      if (before !== after) return true;
+    }
+    return false;
+  }
+
+  disconnectedCallback() {
+    const img = this.shadowRoot?.querySelector("img.base");
+    if (img) img.onerror = null;
+    this._hass = undefined;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
 
     const title = this._config.title || "Anlagenschema";
     const imageUrl = this._resolveImageUrl();
+    const safeTitle = escapeAttribute(title);
+    const safeImageUrl = escapeAttribute(imageUrl);
 
     const sensorHtml = SENSOR_OVERLAYS.map((overlay) => {
       const text = this._formatSensorOverlayText(overlay);
+      const safeText = escapeHtml(text);
       return `
         <div class="overlay sensor" style="left:${overlay.relPos[0] * 100}%; top:${overlay.relPos[1] * 100}%;">
-          ${text}
+          ${safeText}
         </div>
       `;
     }).join("");
@@ -194,7 +240,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       const activeClass = isOn ? "on" : "off";
       return `
         <div class="overlay binary ${activeClass}" style="left:${overlay.relPos[0] * 100}%; top:${overlay.relPos[1] * 100}%;">
-          ${overlay.text}
+          ${escapeHtml(overlay.text)}
         </div>
       `;
     }).join("");
@@ -254,9 +300,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           color: rgba(33, 80, 31, 0.96);
         }
       </style>
-      <ha-card header="${title}">
+      <ha-card header="${safeTitle}">
         <div class="wrapper">
-          <img class="base" src="${imageUrl}" alt="Solvis Anlagenschema" />
+          <img class="base" src="${safeImageUrl}" alt="Solvis Anlagenschema" />
           ${sensorHtml}
           ${binaryHtml}
         </div>
@@ -305,7 +351,8 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       this._registryLoaded = true;
       this._applyDefaultsForCurrentSystem({ onlyMissing: true, setSystemIfMissing: true });
     } catch (err) {
-      this._lastError = `Auto-Erkennung fehlgeschlagen: ${err}`;
+      const message = err instanceof Error ? err.message : String(err);
+      this._lastError = `Auto-Erkennung fehlgeschlagen: ${message}`;
     } finally {
       this._loadingRegistry = false;
       this._render();
@@ -326,16 +373,18 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     return Object.keys(this._systemEntityMap).sort();
   }
 
-  _applyDefaultsForCurrentSystem({ onlyMissing, setSystemIfMissing }) {
+  _applyDefaultsForCurrentSystem({ onlyMissing, setSystemIfMissing, baseConfig, emit = true }) {
     const systems = this._systems();
-    if (!systems.length) return;
+    const next = normalizeConfig(baseConfig ?? this._config);
+    if (!systems.length) {
+      return { changed: false, next };
+    }
 
-    const currentSystem = this._config.system_id && this._systemEntityMap[this._config.system_id]
-      ? this._config.system_id
+    const currentSystem = next.system_id && this._systemEntityMap[next.system_id]
+      ? next.system_id
       : systems[0];
 
     const sourceMap = this._systemEntityMap[currentSystem] || {};
-    const next = normalizeConfig(this._config);
     let changed = false;
 
     if (setSystemIfMissing && next.system_id !== currentSystem) {
@@ -365,17 +414,23 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       }
     }
 
-    if (changed) {
+    if (changed && emit) {
       this._emitConfig(next);
     }
+    return { changed, next };
   }
 
   _onSystemChanged = (ev) => {
     const value = ev.target.value;
-    const next = normalizeConfig(this._config);
-    next.system_id = value;
+    const base = normalizeConfig(this._config);
+    base.system_id = value;
+    const { next } = this._applyDefaultsForCurrentSystem({
+      onlyMissing: false,
+      setSystemIfMissing: false,
+      baseConfig: base,
+      emit: false,
+    });
     this._emitConfig(next);
-    this._applyDefaultsForCurrentSystem({ onlyMissing: false, setSystemIfMissing: false });
   };
 
   _onTitleChanged = (ev) => {
@@ -410,17 +465,20 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const systems = this._systems();
     const selectedSystem = this._config.system_id || (systems[0] || "");
     const hasSystems = systems.length > 0;
+    const safeTitle = escapeAttribute(this._config.title || "");
+    const safeImage = escapeAttribute(this._config.image || "");
+    const safeError = this._lastError ? escapeHtml(this._lastError) : "";
 
     const sensorRows = SENSOR_OVERLAYS.map((overlay) => `
       <div class="row">
-        <div class="label">${overlay.label} - ${overlay.name}</div>
+        <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(overlay.name)}</div>
         <ha-entity-picker data-group="entities" data-key="${overlay.key}"></ha-entity-picker>
       </div>
     `).join("");
 
     const binaryRows = BINARY_OVERLAYS.map((overlay) => `
       <div class="row">
-        <div class="label">${overlay.key.toUpperCase()} - ${overlay.text}</div>
+        <div class="label">${escapeHtml(overlay.key.toUpperCase())} - ${escapeHtml(overlay.text)}</div>
         <ha-entity-picker data-group="binary_entities" data-key="${overlay.key}"></ha-entity-picker>
       </div>
     `).join("");
@@ -524,11 +582,11 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           <div class="grid2">
             <div class="field">
               <label>Titel</label>
-              <input id="title" type="text" value="${this._config.title || ""}" />
+              <input id="title" type="text" value="${safeTitle}" />
             </div>
             <div class="field">
               <label>Basisbild URL (optional)</label>
-              <input id="image" type="text" value="${this._config.image || ""}" placeholder="/hacsfiles/.../solvis-home-assistant-lovelace-card-base.jpg" />
+              <input id="image" type="text" value="${safeImage}" placeholder="/hacsfiles/.../solvis-home-assistant-lovelace-card-base.jpg" />
             </div>
           </div>
           <div class="grid2">
@@ -536,7 +594,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
               <label>Solvis Anlage (auto erkannt)</label>
               ${hasSystems ? `
                 <select id="system">
-                  ${systems.map((s) => `<option value="${s}" ${s === selectedSystem ? "selected" : ""}>${s}</option>`).join("")}
+                  ${systems.map((s) => `<option value="${escapeAttribute(s)}" ${s === selectedSystem ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
                 </select>
               ` : `
                 <input type="text" value="Keine Solvis Anlage automatisch gefunden" disabled />
@@ -548,7 +606,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           </div>
           <div class="notice">Entitäten werden automatisch aus <code>solvis_remote</code> vorbelegt und können unten einzeln überschrieben werden.</div>
           ${this._loadingRegistry ? '<div class="notice">Solvis Entitäten werden geladen...</div>' : ""}
-          ${this._lastError ? `<div class="error">${this._lastError}</div>` : ""}
+          ${safeError ? `<div class="error">${safeError}</div>` : ""}
         </div>
 
         <div class="block">
@@ -589,6 +647,10 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
         this._onEntityChanged(group, key, ev.detail?.value || "");
       });
     }
+  }
+
+  disconnectedCallback() {
+    this._hass = undefined;
   }
 }
 

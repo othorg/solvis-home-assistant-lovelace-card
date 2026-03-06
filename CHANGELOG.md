@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file and in GitHub Re
 
 - https://github.com/othorg/solvis-home-assistant-lovelace-card/releases
 
+## [Unreleased]
+
+### Added
+- Added direct interaction on overlay boxes: clicking a sensor/binary sensor value now opens the corresponding Home Assistant more-info dialog.
+- Added hover pointer feedback on clickable overlay boxes.
+
+### Changed
+- Overlay rendering now tracks click hitboxes for mapped entities and updates them on redraw.
+- Extended tests for click-to-more-info and hover cursor behavior.
+
 ## [0.15.1] - 2026-03-06
 
 ### Fixed

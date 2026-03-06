@@ -288,6 +288,10 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._overlayFontPx = 12;
     this._cachedTrackedEntityIds = null;
     this._resizeObserver = null;
+    this._clickTargets = [];
+    this._boundOnCanvasClick = this._onCanvasClick.bind(this);
+    this._boundOnCanvasPointerMove = this._onCanvasPointerMove.bind(this);
+    this._boundOnCanvasPointerLeave = this._onCanvasPointerLeave.bind(this);
   }
 
   static getStubConfig() {
@@ -438,10 +442,16 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   disconnectedCallback() {
     if (this._imgEl) this._imgEl.onerror = null;
+    if (this._canvasEl) {
+      this._canvasEl.removeEventListener("click", this._boundOnCanvasClick);
+      this._canvasEl.removeEventListener("mousemove", this._boundOnCanvasPointerMove);
+      this._canvasEl.removeEventListener("mouseleave", this._boundOnCanvasPointerLeave);
+    }
     if (this._resizeObserver && this._wrapperEl) {
       this._resizeObserver.unobserve(this._wrapperEl);
     }
     this._resizeObserver = null;
+    this._clickTargets = [];
     this._hass = undefined;
   }
 
@@ -477,7 +487,8 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           inset: 0;
           width: 100%;
           height: 100%;
-          pointer-events: none;
+          pointer-events: auto;
+          cursor: default;
         }
       </style>
       <ha-card>
@@ -497,6 +508,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     if (!this._wrapperEl || !this._imgEl || !this._canvasEl || !this._canvasCtx) return;
     this._imgEl.onerror = this._handleImageError;
     this._imgEl.onload = () => this._renderOverlayCanvas();
+    this._canvasEl.addEventListener("click", this._boundOnCanvasClick);
+    this._canvasEl.addEventListener("mousemove", this._boundOnCanvasPointerMove);
+    this._canvasEl.addEventListener("mouseleave", this._boundOnCanvasPointerLeave);
     this._updateOverlayScale();
     if (typeof ResizeObserver !== "undefined") {
       this._resizeObserver = new ResizeObserver(() => this._updateOverlayScale());
@@ -568,6 +582,8 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     ctx.textBaseline = "middle";
     const textX = boxX + (boxW / 2);
     ctx.fillText(text, textX, y);
+
+    return { x: boxX, y: boxY, w: boxW, h: boxH };
   }
 
   _buildGroupedEntry(key) {
@@ -578,6 +594,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         yRel: sensorOverlay.relPos[1],
         text: this._formatSensorOverlayText(sensorOverlay),
         isBinary: false,
+        entityId: this._getSensorEntityId(sensorOverlay.key),
       };
     }
 
@@ -589,9 +606,78 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         text: this._resolveBinaryLabel(binaryOverlay),
         isBinary: true,
         isOn: this._isBinaryOn(binaryOverlay),
+        entityId: this._getBinaryEntityId(binaryOverlay.key),
       };
     }
     return null;
+  }
+
+  _registerClickTarget(entityId, box) {
+    if (!entityId || !box) return;
+    this._clickTargets.push({
+      entityId,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
+    });
+  }
+
+  _findClickTargetAt(x, y) {
+    for (let i = this._clickTargets.length - 1; i >= 0; i -= 1) {
+      const target = this._clickTargets[i];
+      if (x >= target.x && x <= (target.x + target.w) && y >= target.y && y <= (target.y + target.h)) {
+        return target;
+      }
+    }
+    return null;
+  }
+
+  _pointerToCanvasCoords(ev) {
+    if (!ev) return null;
+    const rect = this._canvasEl?.getBoundingClientRect?.();
+    if (rect && Number.isFinite(rect.left) && Number.isFinite(rect.top)) {
+      return {
+        x: ev.clientX - rect.left,
+        y: ev.clientY - rect.top,
+      };
+    }
+    if (Number.isFinite(ev.offsetX) && Number.isFinite(ev.offsetY)) {
+      return { x: ev.offsetX, y: ev.offsetY };
+    }
+    return null;
+  }
+
+  _emitMoreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(new CustomEvent("hass-more-info", {
+      detail: { entityId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _onCanvasClick(ev) {
+    const point = this._pointerToCanvasCoords(ev);
+    if (!point) return;
+    const target = this._findClickTargetAt(point.x, point.y);
+    if (!target) return;
+    ev.preventDefault?.();
+    ev.stopPropagation?.();
+    this._emitMoreInfo(target.entityId);
+  }
+
+  _onCanvasPointerMove(ev) {
+    const point = this._pointerToCanvasCoords(ev);
+    if (!point || !this._canvasEl) return;
+    const target = this._findClickTargetAt(point.x, point.y);
+    this._canvasEl.style.cursor = target ? "pointer" : "default";
+  }
+
+  _onCanvasPointerLeave() {
+    if (this._canvasEl) {
+      this._canvasEl.style.cursor = "default";
+    }
   }
 
   _drawGroupedAlignedBoxes(ctx, width, height, entries, anchorXRel, align) {
@@ -610,7 +696,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       const y = entry.yRel * height;
       const isOn = entry.isBinary && entry.isOn;
 
-      this._drawLabeledBox(ctx, anchorX, y, entry.text, {
+      const box = this._drawLabeledBox(ctx, anchorX, y, entry.text, {
         fillStyle: isOn ? "rgba(170,235,145,0.85)" : "rgba(255,255,255,0.78)",
         strokeStyle: isOn ? "rgba(85,150,70,0.85)" : "rgba(92,92,92,0.45)",
         textStyle: isOn ? "rgba(33,80,31,0.96)" : "rgba(28,28,28,0.95)",
@@ -619,6 +705,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         fixedWidth,
         align,
       });
+      this._registerClickTarget(entry.entityId, box);
     }
   }
 
@@ -639,6 +726,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     }
 
     const ctx = this._canvasCtx;
+    this._clickTargets = [];
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     ctx.font = `600 ${this._overlayFontPx}px "DejaVu Sans", Arial, sans-serif`;
@@ -683,13 +771,14 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       const text = this._formatSensorOverlayText(overlay);
       const x = overlay.relPos[0] * width;
       const y = overlay.relPos[1] * height;
-      this._drawLabeledBox(ctx, x, y, text, {
+      const box = this._drawLabeledBox(ctx, x, y, text, {
         fillStyle: "rgba(255,255,255,0.78)",
         strokeStyle: "rgba(92,92,92,0.45)",
         textStyle: "rgba(28,28,28,0.95)",
         padX: sensorPadX,
         padY: sensorPadY,
       });
+      this._registerClickTarget(this._getSensorEntityId(overlay.key), box);
     }
 
     for (const overlay of BINARY_OVERLAYS) {
@@ -698,13 +787,14 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       const label = this._resolveBinaryLabel(overlay);
       const x = overlay.relPos[0] * width;
       const y = overlay.relPos[1] * height;
-      this._drawLabeledBox(ctx, x, y, label, {
+      const box = this._drawLabeledBox(ctx, x, y, label, {
         fillStyle: isOn ? "rgba(170,235,145,0.85)" : "rgba(235,235,235,0.72)",
         strokeStyle: isOn ? "rgba(85,150,70,0.85)" : "rgba(110,110,110,0.55)",
         textStyle: isOn ? "rgba(33,80,31,0.96)" : "rgba(50,50,50,0.95)",
         padX: binaryPadX,
         padY: binaryPadY,
       });
+      this._registerClickTarget(this._getBinaryEntityId(overlay.key), box);
     }
   }
 

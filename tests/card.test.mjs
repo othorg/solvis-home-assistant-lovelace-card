@@ -850,3 +850,53 @@ test("drawLabeledBox respects left/right/center alignment for fixed width", () =
   assert.equal(calls[1].x, 60); // right aligned
   assert.equal(calls[2].x, 80); // centered
 });
+
+test("canvas click emits hass-more-info for matching target", () => {
+  const runtime = loadCardRuntime();
+  const { SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card._clickTargets = [{ entityId: "sensor.solvis_temp", x: 10, y: 10, w: 80, h: 20 }];
+
+  let emittedEvent;
+  card.dispatchEvent = (event) => {
+    emittedEvent = event;
+    return true;
+  };
+
+  let prevented = false;
+  let stopped = false;
+  card._onCanvasClick({
+    offsetX: 20,
+    offsetY: 15,
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {
+      stopped = true;
+    },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.equal(emittedEvent?.type, "hass-more-info");
+  assert.equal(emittedEvent?.detail?.entityId, "sensor.solvis_temp");
+});
+
+test("canvas hover sets pointer only for clickable targets", () => {
+  const runtime = loadCardRuntime();
+  const { SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card._canvasEl = { style: { cursor: "default" } };
+  card._clickTargets = [{ entityId: "binary_sensor.pump", x: 5, y: 5, w: 30, h: 15 }];
+
+  card._onCanvasPointerMove({ offsetX: 10, offsetY: 10 });
+  assert.equal(card._canvasEl.style.cursor, "pointer");
+
+  card._onCanvasPointerMove({ offsetX: 200, offsetY: 200 });
+  assert.equal(card._canvasEl.style.cursor, "default");
+
+  card._onCanvasPointerLeave();
+  assert.equal(card._canvasEl.style.cursor, "default");
+});

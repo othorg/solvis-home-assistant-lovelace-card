@@ -154,6 +154,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._sensorNodes = new Map();
     this._binaryNodes = new Map();
     this._cachedTrackedEntityIds = null;
+    this._resizeObserver = null;
   }
 
   static getStubConfig() {
@@ -273,6 +274,10 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   disconnectedCallback() {
     if (this._imgEl) this._imgEl.onerror = null;
+    if (this._resizeObserver && this._wrapperEl) {
+      this._resizeObserver.unobserve(this._wrapperEl);
+    }
+    this._resizeObserver = null;
     this._hass = undefined;
   }
 
@@ -306,7 +311,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         .overlay {
           position: absolute;
           transform: translate(-50%, -50%);
-          font-size: clamp(9px, 1.3vw, 18px);
+          font-size: var(--overlay-font-size, 12px);
           line-height: 1.2;
           border: 1px solid rgba(92, 92, 92, 0.45);
           border-radius: 2px;
@@ -347,6 +352,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
     if (!this._wrapperEl || !this._imgEl) return;
     this._imgEl.onerror = this._handleImageError;
+    this._updateOverlayScale();
+    if (typeof ResizeObserver !== "undefined") {
+      this._resizeObserver = new ResizeObserver(() => this._updateOverlayScale());
+      this._resizeObserver.observe(this._wrapperEl);
+    }
 
     for (const overlay of SENSOR_OVERLAYS) {
       const node = document.createElement("div");
@@ -368,6 +378,18 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     }
 
     this._domReady = true;
+  }
+
+  _updateOverlayScale() {
+    if (!this._wrapperEl) return;
+    const width = this._wrapperEl.offsetWidth || 1080;
+    const ratio = Math.max(0.45, Math.min(1.2, width / 1080));
+    const fontPx = Math.max(8, Math.min(16, Math.round(12 * ratio * 10) / 10));
+    if (this._wrapperEl.style && typeof this._wrapperEl.style.setProperty === "function") {
+      this._wrapperEl.style.setProperty("--overlay-font-size", `${fontPx}px`);
+    } else if (this._wrapperEl.style) {
+      this._wrapperEl.style["--overlay-font-size"] = `${fontPx}px`;
+    }
   }
 
   _updateCardDom() {
@@ -564,9 +586,16 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
   _onEditorInput(ev) {
     const target = ev?.target;
-    if (!target || typeof target.id !== "string") return;
-    if (target.id === "title") this._onTitleChanged(ev);
-    if (target.id === "image") this._onImageChanged(ev);
+    if (!target) return;
+    if (typeof target.id === "string") {
+      if (target.id === "title") this._onTitleChanged(ev);
+      if (target.id === "image") this._onImageChanged(ev);
+    }
+    const group = target?.dataset?.group;
+    const key = target?.dataset?.key;
+    if (group && key && target.tagName === "INPUT") {
+      this._onEntityChanged(group, key, target.value || "");
+    }
   }
 
   _onEditorChange(ev) {
@@ -615,17 +644,24 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const safeImage = escapeAttribute(this._config.image || "");
     const safeError = this._lastError ? escapeHtml(this._lastError) : "";
 
+    const hasEntityPicker = typeof customElements !== "undefined"
+      && Boolean(customElements.get("ha-entity-picker"));
+
     const sensorRows = SENSOR_OVERLAYS.map((overlay) => `
       <div class="row">
         <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(overlay.name)}</div>
-        <ha-entity-picker data-group="entities" data-key="${overlay.key}"></ha-entity-picker>
+        ${hasEntityPicker
+    ? `<ha-entity-picker data-group="entities" data-key="${overlay.key}"></ha-entity-picker>`
+    : `<input type="text" data-group="entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.entities?.[overlay.key] || "")}" placeholder="sensor.entity_id" />`}
       </div>
     `).join("");
 
     const binaryRows = BINARY_OVERLAYS.map((overlay) => `
       <div class="row">
         <div class="label">${escapeHtml(overlay.key.toUpperCase())} - ${escapeHtml(overlay.text)}</div>
-        <ha-entity-picker data-group="binary_entities" data-key="${overlay.key}"></ha-entity-picker>
+        ${hasEntityPicker
+    ? `<ha-entity-picker data-group="binary_entities" data-key="${overlay.key}"></ha-entity-picker>`
+    : `<input type="text" data-group="binary_entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_entities?.[overlay.key] || "")}" placeholder="binary_sensor.entity_id" />`}
       </div>
     `).join("");
 
@@ -781,6 +817,8 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       picker.includeDomains = includeDomains;
       picker.value = value;
       picker.allowCustomEntity = true;
+      picker.removeEventListener("value-changed", this._boundOnPickerValueChanged);
+      picker.addEventListener("value-changed", this._boundOnPickerValueChanged);
     }
   }
 

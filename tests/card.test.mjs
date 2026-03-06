@@ -462,3 +462,40 @@ test("card and package versions are in sync", () => {
   );
   assert.equal(runtime.CARD_VERSION, pkg.version);
 });
+
+test("editor renders manual input fallback when ha-entity-picker is unavailable", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /placeholder="sensor\.entity_id"/);
+  assert.match(html, /placeholder="binary_sensor\.entity_id"/);
+});
+
+test("manual fallback input updates entity mapping", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emittedConfig;
+  editor._emitConfig = (config) => {
+    emittedConfig = config;
+  };
+
+  editor._onEditorInput({
+    target: {
+      tagName: "INPUT",
+      dataset: { group: "entities", key: "s10" },
+      value: "sensor.custom_temp",
+      id: "",
+    },
+  });
+
+  assert.equal(emittedConfig.entities.s10, "sensor.custom_temp");
+});

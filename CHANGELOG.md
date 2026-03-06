@@ -9,6 +9,22 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.50.0] - 2026-03-06
+
+### Added
+- Added per-overlay action configuration in editor (`tap_action`, `hold_action`, optional `navigation_path`).
+- Added long-press handling for overlays with configurable duration (`long_press_ms`).
+- Added display status badges for `offline` and `stale` entity counts.
+- Added editor presets (`Standard`, `Compact`, `Service`).
+- Added editor config import/export via JSON textarea.
+- Added compact mode to render denser overlays.
+
+### Changed
+- Updated README documentation for interaction model, presets, display options, and import/export workflow.
+- Improved interaction model to support per-overlay actions (`more-info`, `navigate`, `toggle`, `none`) for both tap and hold.
+- Added configurable navigation target handling and binary toggle support through Home Assistant services.
+- Extended automated test coverage for presets, import/export, action dispatching, stale/offline summary, and long-press behavior.
+
 ## [0.15.3] - 2026-03-06
 
 ### Fixed

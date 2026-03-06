@@ -14,6 +14,15 @@ https://github.com/othorg/solvis-ha-integration
 - Supports multiple Solvis systems (system selector in editor)
 - Clean canvas-based overlay rendering for sharper labels and status badges
 - 12 sensor overlays + 5 binary status highlights
+- Bilingual UI:
+  - German for HA language `de*`
+  - English for all other languages
+- Interactive overlays:
+  - Tap and long-press actions per overlay (`more-info`, `navigate`, `toggle`, `none`)
+- Status badges for stale/offline entities
+- Compact mode for denser dashboards
+- Editor presets (`Standard`, `Compact`, `Service`)
+- Config import/export (JSON) directly in the editor
 
 ## Installation (HACS)
 
@@ -53,6 +62,22 @@ Use the Lovelace UI card editor.
 - Overlay text size is configurable in the editor (`Auto`, `Klein`, `Mittel`, `Gross`).
 - Overlay labels are configurable per sensor and per binary status directly in the editor.
 - Sensor and binary entity inputs provide picker-like suggestions via datalist from current HA states.
+- Label fields are plain text fields (no lookup behavior).
+- Display options in editor:
+  - `Compact mode`
+  - `Show status badges`
+  - `Stale threshold (minutes)`
+  - `Long-press duration (ms)`
+- Interaction presets:
+  - `Standard`: balanced defaults
+  - `Compact`: smaller overlays + compact defaults
+  - `Service`: binary overlays optimized for quick toggle workflows
+- Overlay action matrix:
+  - Per overlay configure `tap_action`, `hold_action`, optional `navigation_path`
+  - Supported actions: `more-info`, `navigate`, `toggle`, `none`
+- Import/Export:
+  - Export current card configuration as JSON
+  - Import JSON back into editor configuration
 - If the base image is not shown in your installation, set `Basisbild URL` explicitly in the card editor, for example:
 `/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg`
 
@@ -60,6 +85,29 @@ Image loading behavior:
 
 - The card auto-detects its own script base URL and tries matching image paths first.
 - Additional fallback paths for HACS and `/local/community` are included.
+
+## Overlay Interaction Defaults
+
+- Sensor overlays:
+  - Tap: `more-info`
+  - Hold: `navigate` (default history path if not configured)
+- Binary overlays:
+  - Tap: `more-info`
+  - Hold: `toggle`
+
+All defaults can be changed per overlay in the editor.
+
+## Status Badges
+
+If enabled, the card shows badges in the top-right corner:
+
+- `Offline`: count of mapped entities with unavailable/unknown state
+- `Stale`: count of mapped entities older than configured stale threshold
+
+Binary overlays also distinguish `off` vs `unavailable` visually:
+
+- `off`: normal gray binary style
+- `unavailable`: dashed border + `-- Label` text
 
 ## Card Type
 

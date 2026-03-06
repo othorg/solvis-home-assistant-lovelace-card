@@ -259,6 +259,8 @@ function loadCardRuntime(options = {}) {
     Error,
     RegExp,
     Date,
+    setTimeout,
+    clearTimeout,
   };
 
   context.globalThis = context;
@@ -903,4 +905,131 @@ test("canvas hover sets pointer only for clickable targets", () => {
 
   card._onCanvasPointerLeave();
   assert.equal(card._canvasEl.style.cursor, "default");
+});
+
+test("normalizeConfig includes defaults for compact, badges and interaction", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig } = runtime;
+
+  const config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  assert.equal(config.compact_mode, false);
+  assert.equal(config.show_status_badges, true);
+  assert.equal(config.stale_threshold_minutes, 30);
+  assert.equal(config.long_press_ms, 550);
+  assert.equal(JSON.stringify(config.overlay_actions), JSON.stringify({}));
+});
+
+test("service preset configures binary tap actions to toggle", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+
+  let emitted;
+  editor._emitConfig = (config) => {
+    emitted = config;
+  };
+
+  editor._onPresetApply("service");
+  assert.equal(emitted.overlay_text_size, "medium");
+  assert.equal(emitted.stale_threshold_minutes, 10);
+  assert.equal(emitted.overlay_actions.a1.tap_action, "toggle");
+  assert.equal(emitted.overlay_actions.a12.hold_action, "more-info");
+});
+
+test("editor can export and import config JSON", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({
+    type: `custom:${CARD_TYPE}`,
+    title: "Demo",
+    compact_mode: true,
+    entities: { s10: "sensor.demo" },
+  });
+
+  const exported = editor._exportConfigToJson();
+  assert.match(exported, /"title": "Demo"/);
+
+  let imported;
+  editor._emitConfig = (config) => {
+    imported = config;
+  };
+  editor._importConfigFromJson(exported);
+
+  assert.equal(imported.title, "Demo");
+  assert.equal(imported.compact_mode, true);
+  assert.equal(imported.entities.s10, "sensor.demo");
+});
+
+test("overlay action can navigate to configured path", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    overlay_actions: {
+      s10: { tap_action: "navigate", hold_action: "none", navigation_path: "/lovelace/test" },
+    },
+  });
+
+  let emittedEvent;
+  card.dispatchEvent = (event) => {
+    emittedEvent = event;
+    return true;
+  };
+
+  card._executeOverlayAction({ key: "s10", entityId: "sensor.outdoor", isBinary: false }, "tap");
+  assert.equal(emittedEvent?.type, "hass-navigate");
+  assert.equal(emittedEvent?.detail?.navigation_path, "/lovelace/test");
+});
+
+test("status summary distinguishes stale and offline entities", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  const staleTs = new Date(Date.now() - (61 * 60 * 1000)).toISOString();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    stale_threshold_minutes: 60,
+    entities: { s10: "sensor.stale", s1: "sensor.offline" },
+  });
+  card.hass = {
+    states: {
+      "sensor.stale": { state: "12", last_updated: staleTs },
+      "sensor.offline": { state: "unavailable" },
+    },
+  };
+
+  const summary = card._computeStatusSummary();
+  assert.equal(summary.stale, 1);
+  assert.equal(summary.offline, 1);
+});
+
+test("long press triggers hold action instead of tap action", async () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    long_press_ms: 1,
+  });
+  card._getLongPressMs = () => 1;
+  card._clickTargets = [{ key: "s10", entityId: "sensor.x", isBinary: false, x: 0, y: 0, w: 40, h: 20 }];
+
+  const calls = [];
+  card._executeOverlayAction = (_target, kind) => {
+    calls.push(kind);
+  };
+
+  card._onCanvasPointerDown({ offsetX: 5, offsetY: 5, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 8));
+  card._onCanvasPointerUp({ offsetX: 5, offsetY: 5 });
+
+  assert.equal(JSON.stringify(calls), JSON.stringify(["hold"]));
 });

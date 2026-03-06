@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.15.3";
+const CARD_VERSION = "0.50.0";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -70,12 +70,21 @@ const BINARY_OVERLAYS = [
 const SENSOR_KEYS = SENSOR_OVERLAYS.map((s) => s.key);
 const BINARY_KEYS = BINARY_OVERLAYS.map((b) => b.key);
 const ALL_KEYS = [...SENSOR_KEYS, ...BINARY_KEYS];
+const ALL_OVERLAYS = [
+  ...SENSOR_OVERLAYS.map((overlay) => ({ ...overlay, kind: "sensor" })),
+  ...BINARY_OVERLAYS.map((overlay) => ({ ...overlay, kind: "binary" })),
+];
 const OVERLAY_TEXT_SIZE_OPTIONS = ["auto", "small", "medium", "large"];
 const OVERLAY_TEXT_SIZE_PIXELS = {
   small: 10,
   medium: 12,
   large: 14,
 };
+const OVERLAY_ACTION_TYPES = ["more-info", "navigate", "toggle", "none"];
+const DEFAULT_LONG_PRESS_MS = 550;
+const DEFAULT_STALE_MINUTES = 30;
+const STALE_MINUTES_RANGE = { min: 1, max: 240 };
+const LONG_PRESS_RANGE = { min: 200, max: 2000 };
 
 const I18N = {
   de: {
@@ -99,6 +108,34 @@ const I18N = {
     sensors_values: "Sensoren (Werte)",
     binary_sensors_status: "Binärsensoren (Status)",
     label_placeholder: "Bezeichner (Standard: {default})",
+    display_options: "Anzeige",
+    compact_mode: "Kompaktmodus",
+    show_status_badges: "Status-Badges anzeigen",
+    stale_threshold_minutes: "Stale-Schwelle (Minuten)",
+    long_press_ms: "Long-Press Dauer (ms)",
+    interaction_presets: "Interaktions-Presets",
+    preset: "Preset",
+    preset_standard: "Standard",
+    preset_compact: "Kompakt",
+    preset_service: "Service",
+    apply_preset: "Preset anwenden",
+    overlay_actions: "Overlay-Aktionen",
+    tap_action: "Tap-Aktion",
+    hold_action: "Hold-Aktion",
+    navigation_path: "Navigationspfad (optional)",
+    action_more_info: "More Info",
+    action_navigate: "Navigation",
+    action_toggle: "Toggle",
+    action_none: "Keine",
+    import_export: "Import / Export",
+    export_config: "Konfiguration exportieren",
+    import_config: "Konfiguration importieren",
+    config_json: "Konfiguration (JSON)",
+    config_json_placeholder: "{\"type\":\"custom:solvis-home-assistant-lovelace-card\", ...}",
+    import_failed: "Import fehlgeschlagen",
+    export_ready: "Konfiguration exportiert",
+    stale_badge: "Veraltet",
+    offline_badge: "Offline",
   },
   en: {
     default_title: "System diagram",
@@ -121,6 +158,34 @@ const I18N = {
     sensors_values: "Sensors (values)",
     binary_sensors_status: "Binary sensors (status)",
     label_placeholder: "Label (default: {default})",
+    display_options: "Display",
+    compact_mode: "Compact mode",
+    show_status_badges: "Show status badges",
+    stale_threshold_minutes: "Stale threshold (minutes)",
+    long_press_ms: "Long-press duration (ms)",
+    interaction_presets: "Interaction presets",
+    preset: "Preset",
+    preset_standard: "Standard",
+    preset_compact: "Compact",
+    preset_service: "Service",
+    apply_preset: "Apply preset",
+    overlay_actions: "Overlay actions",
+    tap_action: "Tap action",
+    hold_action: "Hold action",
+    navigation_path: "Navigation path (optional)",
+    action_more_info: "More info",
+    action_navigate: "Navigate",
+    action_toggle: "Toggle",
+    action_none: "None",
+    import_export: "Import / Export",
+    export_config: "Export config",
+    import_config: "Import config",
+    config_json: "Configuration (JSON)",
+    config_json_placeholder: "{\"type\":\"custom:solvis-home-assistant-lovelace-card\", ...}",
+    import_failed: "Import failed",
+    export_ready: "Configuration exported",
+    stale_badge: "Stale",
+    offline_badge: "Offline",
   },
 };
 
@@ -200,24 +265,118 @@ function localizeBinaryName(lang, key, fallback = "") {
   return BINARY_NAME_I18N[lang]?.[key] || BINARY_NAME_I18N.en[key] || fallback || key.toUpperCase();
 }
 
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function defaultOverlayActionForKey(key, kind) {
+  const isBinary = BINARY_KEYS.includes(key);
+  if (kind === "tap") return "more-info";
+  if (kind === "hold" && isBinary) return "toggle";
+  return "navigate";
+}
+
+function buildServicePresetOverlayActions() {
+  const actions = {};
+  for (const key of BINARY_KEYS) {
+    actions[key] = {
+      tap_action: "toggle",
+      hold_action: "more-info",
+      navigation_path: "",
+    };
+  }
+  return actions;
+}
+
+function buildPresetConfig(name) {
+  if (name === "compact") {
+    return {
+      compact_mode: true,
+      overlay_text_size: "small",
+      show_status_badges: true,
+      stale_threshold_minutes: 45,
+      long_press_ms: 500,
+    };
+  }
+  if (name === "service") {
+    return {
+      compact_mode: false,
+      overlay_text_size: "medium",
+      show_status_badges: true,
+      stale_threshold_minutes: 10,
+      long_press_ms: 450,
+      overlay_actions: buildServicePresetOverlayActions(),
+    };
+  }
+  return {
+    compact_mode: false,
+    overlay_text_size: "auto",
+    show_status_badges: true,
+    stale_threshold_minutes: DEFAULT_STALE_MINUTES,
+    long_press_ms: DEFAULT_LONG_PRESS_MS,
+  };
+}
+
+function resolveOverlayActionConfig(config, key) {
+  const configured = config?.overlay_actions?.[key];
+  const action = typeof configured === "object" && configured ? { ...configured } : {};
+  const isBinary = BINARY_KEYS.includes(key);
+  return {
+    tap_action: OVERLAY_ACTION_TYPES.includes(action.tap_action)
+      ? action.tap_action
+      : defaultOverlayActionForKey(key, "tap"),
+    hold_action: OVERLAY_ACTION_TYPES.includes(action.hold_action)
+      ? action.hold_action
+      : defaultOverlayActionForKey(key, "hold"),
+    navigation_path: String(action.navigation_path || "").trim(),
+    isBinary,
+  };
+}
+
 function normalizeConfig(config) {
   const {
     entities,
     binary_entities: binaryEntities,
+    overlay_actions: overlayActions,
     ...rest
   } = config || {};
-  return {
+  const normalized = {
     type: `custom:${CARD_TYPE}`,
     title: "",
     image: "",
     system_id: "",
     overlay_text_size: "auto",
+    compact_mode: false,
+    show_status_badges: true,
+    stale_threshold_minutes: DEFAULT_STALE_MINUTES,
+    long_press_ms: DEFAULT_LONG_PRESS_MS,
     sensor_labels: {},
     binary_labels: {},
+    overlay_actions: {},
     ...rest,
     entities: { ...(entities || {}) },
     binary_entities: { ...(binaryEntities || {}) },
+    overlay_actions: { ...(overlayActions || {}) },
   };
+
+  normalized.compact_mode = Boolean(normalized.compact_mode);
+  normalized.show_status_badges = Boolean(normalized.show_status_badges);
+  normalized.stale_threshold_minutes = clampNumber(
+    normalized.stale_threshold_minutes,
+    STALE_MINUTES_RANGE.min,
+    STALE_MINUTES_RANGE.max,
+    DEFAULT_STALE_MINUTES,
+  );
+  normalized.long_press_ms = clampNumber(
+    normalized.long_press_ms,
+    LONG_PRESS_RANGE.min,
+    LONG_PRESS_RANGE.max,
+    DEFAULT_LONG_PRESS_MS,
+  );
+
+  return normalized;
 }
 
 function clampImageIdx(value) {
@@ -285,14 +444,20 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._canvasEl = null;
     this._canvasCtx = null;
     this._wrapperEl = null;
+    this._statusLayerEl = null;
+    this._offlineBadgeEl = null;
+    this._staleBadgeEl = null;
     this._overlayFontPx = 12;
     this._cachedTrackedEntityIds = null;
     this._resizeObserver = null;
     this._canvasRafId = null;
     this._clickTargets = [];
-    this._boundOnCanvasClick = this._onCanvasClick.bind(this);
+    this._activePress = null;
     this._boundOnCanvasPointerMove = this._onCanvasPointerMove.bind(this);
     this._boundOnCanvasPointerLeave = this._onCanvasPointerLeave.bind(this);
+    this._boundOnCanvasPointerDown = this._onCanvasPointerDown.bind(this);
+    this._boundOnCanvasPointerUp = this._onCanvasPointerUp.bind(this);
+    this._boundOnCanvasPointerCancel = this._onCanvasPointerCancel.bind(this);
   }
 
   static getStubConfig() {
@@ -354,6 +519,106 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   _defaultBinaryName(key, fallback = "") {
     return localizeBinaryName(this._lang(), key, fallback);
+  }
+
+  _compactFactor() {
+    return this._config?.compact_mode ? 0.82 : 1;
+  }
+
+  _getLongPressMs() {
+    return clampNumber(
+      this._config?.long_press_ms,
+      LONG_PRESS_RANGE.min,
+      LONG_PRESS_RANGE.max,
+      DEFAULT_LONG_PRESS_MS,
+    );
+  }
+
+  _getStaleThresholdMs() {
+    const minutes = clampNumber(
+      this._config?.stale_threshold_minutes,
+      STALE_MINUTES_RANGE.min,
+      STALE_MINUTES_RANGE.max,
+      DEFAULT_STALE_MINUTES,
+    );
+    return minutes * 60 * 1000;
+  }
+
+  _getOverlayActionConfig(key) {
+    return resolveOverlayActionConfig(this._config, key);
+  }
+
+  _buildDefaultNavigationPath(entityId) {
+    if (!entityId) return "/history";
+    return `/history?entity_id=${encodeURIComponent(entityId)}`;
+  }
+
+  _emitNavigate(path) {
+    if (!path) return;
+    this.dispatchEvent(new CustomEvent("hass-navigate", {
+      detail: { navigation_path: path },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  async _toggleEntity(entityId) {
+    if (!entityId || typeof this._hass?.callService !== "function") return;
+    const [domain] = entityId.split(".");
+    const serviceDomain = domain || "homeassistant";
+    try {
+      await this._hass.callService(serviceDomain, "toggle", { entity_id: entityId });
+    } catch {
+      try {
+        await this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
+      } catch {
+        // Ignore service failures and keep UX responsive.
+      }
+    }
+  }
+
+  _executeOverlayAction(target, kind) {
+    if (!target?.entityId) return;
+    if (!target?.key) {
+      this._emitMoreInfo(target.entityId);
+      return;
+    }
+    const actionConfig = this._getOverlayActionConfig(target.key);
+    const actionType = kind === "hold" ? actionConfig.hold_action : actionConfig.tap_action;
+    if (actionType === "none") return;
+
+    if (actionType === "more-info") {
+      this._emitMoreInfo(target.entityId);
+      return;
+    }
+    if (actionType === "navigate") {
+      const path = actionConfig.navigation_path || this._buildDefaultNavigationPath(target.entityId);
+      this._emitNavigate(path);
+      return;
+    }
+    if (actionType === "toggle") {
+      this._toggleEntity(target.entityId);
+    }
+  }
+
+  _computeStatusSummary() {
+    const thresholdMs = this._getStaleThresholdMs();
+    const now = Date.now();
+    let offline = 0;
+    let stale = 0;
+
+    for (const entityId of this._trackedEntityIds()) {
+      const stateObj = this._hass?.states?.[entityId];
+      if (!stateObj || isStateUnavailable(stateObj)) {
+        offline += 1;
+        continue;
+      }
+      const ts = Date.parse(stateObj.last_updated || stateObj.last_changed || "");
+      if (Number.isFinite(ts) && (now - ts) > thresholdMs) {
+        stale += 1;
+      }
+    }
+    return { offline, stale };
   }
 
   _resolveImageUrl() {
@@ -438,9 +703,13 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   _hasRelevantStateChanges(previousHass, nextHass) {
     for (const entityId of this._trackedEntityIds()) {
-      const before = previousHass?.states?.[entityId]?.state ?? null;
-      const after = nextHass?.states?.[entityId]?.state ?? null;
-      if (before !== after) return true;
+      const beforeObj = previousHass?.states?.[entityId];
+      const afterObj = nextHass?.states?.[entityId];
+      const before = beforeObj?.state ?? null;
+      const after = afterObj?.state ?? null;
+      const beforeUpdated = beforeObj?.last_updated ?? beforeObj?.last_changed ?? null;
+      const afterUpdated = afterObj?.last_updated ?? afterObj?.last_changed ?? null;
+      if (before !== after || beforeUpdated !== afterUpdated) return true;
     }
     return false;
   }
@@ -448,9 +717,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   disconnectedCallback() {
     if (this._imgEl) this._imgEl.onerror = null;
     if (this._canvasEl) {
-      this._canvasEl.removeEventListener("click", this._boundOnCanvasClick);
       this._canvasEl.removeEventListener("pointermove", this._boundOnCanvasPointerMove);
       this._canvasEl.removeEventListener("pointerleave", this._boundOnCanvasPointerLeave);
+      this._canvasEl.removeEventListener("pointerdown", this._boundOnCanvasPointerDown);
+      this._canvasEl.removeEventListener("pointerup", this._boundOnCanvasPointerUp);
+      this._canvasEl.removeEventListener("pointercancel", this._boundOnCanvasPointerCancel);
     }
     if (this._resizeObserver && this._wrapperEl) {
       this._resizeObserver.unobserve(this._wrapperEl);
@@ -460,6 +731,10 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       cancelAnimationFrame(this._canvasRafId);
     }
     this._canvasRafId = null;
+    if (this._activePress?.timer && typeof clearTimeout === "function") {
+      clearTimeout(this._activePress.timer);
+    }
+    this._activePress = null;
     this._clickTargets = [];
     this._hass = undefined;
   }
@@ -498,10 +773,47 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           height: 100%;
           pointer-events: auto;
           cursor: default;
+          touch-action: manipulation;
+        }
+
+        .status-badges {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          display: flex;
+          gap: 6px;
+          align-items: center;
+          z-index: 2;
+        }
+
+        .status-badge {
+          font-size: 11px;
+          font-weight: 700;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid transparent;
+          backdrop-filter: blur(2px);
+          white-space: nowrap;
+        }
+
+        .status-badge.offline {
+          color: #7a1f1f;
+          background: rgba(255, 190, 190, 0.8);
+          border-color: rgba(170, 55, 55, 0.7);
+        }
+
+        .status-badge.stale {
+          color: #6c5b00;
+          background: rgba(255, 236, 173, 0.82);
+          border-color: rgba(160, 132, 20, 0.7);
         }
       </style>
       <ha-card>
         <div class="wrapper">
+          <div class="status-badges" hidden>
+            <span class="status-badge offline" hidden></span>
+            <span class="status-badge stale" hidden></span>
+          </div>
           <img class="base" alt="" />
           <canvas class="overlay-canvas"></canvas>
         </div>
@@ -510,6 +822,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
     this._cardEl = this.shadowRoot.querySelector("ha-card");
     this._wrapperEl = this.shadowRoot.querySelector(".wrapper");
+    this._statusLayerEl = this.shadowRoot.querySelector(".status-badges");
+    this._offlineBadgeEl = this.shadowRoot.querySelector(".status-badge.offline");
+    this._staleBadgeEl = this.shadowRoot.querySelector(".status-badge.stale");
     this._imgEl = this.shadowRoot.querySelector("img.base");
     this._canvasEl = this.shadowRoot.querySelector("canvas.overlay-canvas");
     this._canvasCtx = this._canvasEl?.getContext?.("2d") || null;
@@ -517,9 +832,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     if (!this._wrapperEl || !this._imgEl || !this._canvasEl || !this._canvasCtx) return;
     this._imgEl.onerror = this._handleImageError;
     this._imgEl.onload = () => this._scheduleCanvasRender();
-    this._canvasEl.addEventListener("click", this._boundOnCanvasClick);
     this._canvasEl.addEventListener("pointermove", this._boundOnCanvasPointerMove);
     this._canvasEl.addEventListener("pointerleave", this._boundOnCanvasPointerLeave);
+    this._canvasEl.addEventListener("pointerdown", this._boundOnCanvasPointerDown);
+    this._canvasEl.addEventListener("pointerup", this._boundOnCanvasPointerUp);
+    this._canvasEl.addEventListener("pointercancel", this._boundOnCanvasPointerCancel);
     this._updateOverlayScale();
     this._scheduleCanvasRender();
     if (typeof ResizeObserver !== "undefined") {
@@ -545,6 +862,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       const ratio = Math.max(0.45, Math.min(1.2, width / 1080));
       fontPx = Math.max(8, Math.min(16, Math.round(12 * ratio * 10) / 10));
     }
+    fontPx = Math.max(7, Math.round(fontPx * this._compactFactor() * 10) / 10);
 
     if (fontPx === this._overlayFontPx) return;
 
@@ -649,10 +967,12 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     return null;
   }
 
-  _registerClickTarget(entityId, box) {
-    if (!entityId || !box) return;
+  _registerClickTarget(target, box) {
+    if (!target?.entityId || !target?.key || !box) return;
     this._clickTargets.push({
-      entityId,
+      key: target.key,
+      entityId: target.entityId,
+      isBinary: Boolean(target.isBinary),
       x: box.x,
       y: box.y,
       w: box.w,
@@ -696,6 +1016,55 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     }));
   }
 
+  _clearActivePress() {
+    if (this._activePress?.timer && typeof clearTimeout === "function") {
+      clearTimeout(this._activePress.timer);
+    }
+    this._activePress = null;
+  }
+
+  _onCanvasPointerDown(ev) {
+    const point = this._pointerToCanvasCoords(ev);
+    if (!point) return;
+    const target = this._findClickTargetAt(point.x, point.y);
+    if (!target) {
+      this._clearActivePress();
+      return;
+    }
+
+    const press = {
+      target,
+      longPressTriggered: false,
+      timer: null,
+      pointerId: ev?.pointerId,
+    };
+    this._activePress = press;
+    ev.preventDefault?.();
+
+    if (typeof setTimeout === "function") {
+      press.timer = setTimeout(() => {
+        if (this._activePress !== press || press.longPressTriggered) return;
+        press.longPressTriggered = true;
+        this._executeOverlayAction(press.target, "hold");
+      }, this._getLongPressMs());
+    }
+  }
+
+  _onCanvasPointerUp(ev) {
+    const point = this._pointerToCanvasCoords(ev);
+    const active = this._activePress;
+    this._clearActivePress();
+    if (!active || active.longPressTriggered || !point) return;
+
+    const target = this._findClickTargetAt(point.x, point.y);
+    if (!target || target.entityId !== active.target.entityId || target.key !== active.target.key) return;
+    this._executeOverlayAction(active.target, "tap");
+  }
+
+  _onCanvasPointerCancel() {
+    this._clearActivePress();
+  }
+
   _onCanvasClick(ev) {
     const point = this._pointerToCanvasCoords(ev);
     if (!point) return;
@@ -703,7 +1072,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     if (!target) return;
     ev.preventDefault?.();
     ev.stopPropagation?.();
-    this._emitMoreInfo(target.entityId);
+    this._executeOverlayAction(target, "tap");
   }
 
   _onCanvasPointerMove(ev) {
@@ -714,6 +1083,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   _onCanvasPointerLeave() {
+    this._clearActivePress();
     if (this._canvasEl) {
       this._canvasEl.style.cursor = "default";
     }
@@ -722,8 +1092,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   _drawGroupedAlignedBoxes(ctx, width, height, entries, anchorXRel, align) {
     if (!entries.length) return;
 
-    const padX = Math.max(4, Math.round(this._overlayFontPx * 0.50));
-    const padY = Math.max(2, Math.round(this._overlayFontPx * 0.25));
+    const compact = this._compactFactor();
+    const padX = Math.max(3, Math.round(this._overlayFontPx * 0.50 * compact));
+    const padY = Math.max(2, Math.round(this._overlayFontPx * 0.25 * compact));
     let maxTextWidth = 0;
     for (const entry of entries) {
       maxTextWidth = Math.max(maxTextWidth, ctx.measureText(entry.text).width);
@@ -765,7 +1136,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         dash,
         align,
       });
-      this._registerClickTarget(entry.entityId, box);
+      this._registerClickTarget({
+        key: entry.key,
+        entityId: entry.entityId,
+        isBinary: entry.isBinary,
+      }, box);
     }
   }
 
@@ -821,10 +1196,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       groupedDrawnKeys.add(entry.key);
     }
 
-    const sensorPadX = Math.max(3, Math.round(this._overlayFontPx * 0.45));
-    const sensorPadY = Math.max(2, Math.round(this._overlayFontPx * 0.28));
-    const binaryPadX = Math.max(4, Math.round(this._overlayFontPx * 0.55));
-    const binaryPadY = Math.max(2, Math.round(this._overlayFontPx * 0.25));
+    const compact = this._compactFactor();
+    const sensorPadX = Math.max(3, Math.round(this._overlayFontPx * 0.45 * compact));
+    const sensorPadY = Math.max(2, Math.round(this._overlayFontPx * 0.28 * compact));
+    const binaryPadX = Math.max(3, Math.round(this._overlayFontPx * 0.55 * compact));
+    const binaryPadY = Math.max(2, Math.round(this._overlayFontPx * 0.25 * compact));
 
     for (const overlay of SENSOR_OVERLAYS) {
       if (groupedDrawnKeys.has(overlay.key)) continue;
@@ -838,7 +1214,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         padX: sensorPadX,
         padY: sensorPadY,
       });
-      this._registerClickTarget(this._getSensorEntityId(overlay.key), box);
+      this._registerClickTarget({
+        key: overlay.key,
+        entityId: this._getSensorEntityId(overlay.key),
+        isBinary: false,
+      }, box);
     }
 
     for (const overlay of BINARY_OVERLAYS) {
@@ -874,8 +1254,38 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
         padY: binaryPadY,
         dash,
       });
-      this._registerClickTarget(this._getBinaryEntityId(overlay.key), box);
+      this._registerClickTarget({
+        key: overlay.key,
+        entityId: this._getBinaryEntityId(overlay.key),
+        isBinary: true,
+      }, box);
     }
+  }
+
+  _updateStatusBadges() {
+    if (!this._statusLayerEl || !this._offlineBadgeEl || !this._staleBadgeEl) return;
+
+    if (!this._config?.show_status_badges) {
+      this._statusLayerEl.hidden = true;
+      this._offlineBadgeEl.hidden = true;
+      this._staleBadgeEl.hidden = true;
+      return;
+    }
+
+    const summary = this._computeStatusSummary();
+    const showOffline = summary.offline > 0;
+    const showStale = summary.stale > 0;
+
+    this._offlineBadgeEl.hidden = !showOffline;
+    this._staleBadgeEl.hidden = !showStale;
+
+    if (showOffline) {
+      this._offlineBadgeEl.textContent = `${this._t("offline_badge")}: ${summary.offline}`;
+    }
+    if (showStale) {
+      this._staleBadgeEl.textContent = `${this._t("stale_badge")}: ${summary.stale}`;
+    }
+    this._statusLayerEl.hidden = !(showOffline || showStale);
   }
 
   _updateCardDom() {
@@ -895,6 +1305,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       this._imgEl.dataset.src = imageUrl;
       this._imgEl.src = imageUrl;
     }
+    this._updateStatusBadges();
     this._updateOverlayScale();
     this._scheduleCanvasRender();
   }
@@ -916,7 +1327,9 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     this._registryLoaded = false;
     this._loadingRegistry = false;
     this._lastError = "";
+    this._lastInfo = "";
     this._editorEventsBound = false;
+    this._configJsonBuffer = "";
 
     this._boundOnEditorChange = this._onEditorChange.bind(this);
     this._boundOnEditorClick = this._onEditorClick.bind(this);
@@ -925,6 +1338,8 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = normalizeConfig(config);
+    this._configJsonBuffer = "";
+    this._lastInfo = "";
     this._render();
     this._ensureRegistryLoaded();
   }
@@ -979,6 +1394,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
   _emitConfig(config) {
     this._config = normalizeConfig(config);
+    this._lastInfo = "";
     this.dispatchEvent(new CustomEvent("config-changed", {
       detail: { config: this._config },
       bubbles: true,
@@ -1070,6 +1486,40 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     this._emitConfig(next);
   };
 
+  _onCompactModeChanged = (ev) => {
+    const next = normalizeConfig(this._config);
+    next.compact_mode = Boolean(ev?.target?.checked);
+    this._emitConfig(next);
+  };
+
+  _onShowStatusBadgesChanged = (ev) => {
+    const next = normalizeConfig(this._config);
+    next.show_status_badges = Boolean(ev?.target?.checked);
+    this._emitConfig(next);
+  };
+
+  _onStaleThresholdChanged = (ev) => {
+    const next = normalizeConfig(this._config);
+    next.stale_threshold_minutes = clampNumber(
+      ev?.target?.value,
+      STALE_MINUTES_RANGE.min,
+      STALE_MINUTES_RANGE.max,
+      next.stale_threshold_minutes,
+    );
+    this._emitConfig(next);
+  };
+
+  _onLongPressChanged = (ev) => {
+    const next = normalizeConfig(this._config);
+    next.long_press_ms = clampNumber(
+      ev?.target?.value,
+      LONG_PRESS_RANGE.min,
+      LONG_PRESS_RANGE.max,
+      next.long_press_ms,
+    );
+    this._emitConfig(next);
+  };
+
   _onAutofill = () => {
     this._applyDefaultsForCurrentSystem({ onlyMissing: false, setSystemIfMissing: true });
   };
@@ -1083,13 +1533,62 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     this._emitConfig(next);
   };
 
+  _onOverlayActionChanged = (key, field, value) => {
+    if (!key || !field) return;
+    const next = normalizeConfig(this._config);
+    if (!next.overlay_actions[key] || typeof next.overlay_actions[key] !== "object") {
+      next.overlay_actions[key] = {};
+    }
+    if (field === "tap_action" || field === "hold_action") {
+      next.overlay_actions[key][field] = OVERLAY_ACTION_TYPES.includes(value) ? value : "more-info";
+    } else if (field === "navigation_path") {
+      next.overlay_actions[key][field] = String(value || "").trim();
+    }
+    this._emitConfig(next);
+  };
+
+  _onPresetApply = (name) => {
+    const presetName = String(name || "standard");
+    const next = normalizeConfig(this._config);
+    const preset = buildPresetConfig(presetName);
+    next.compact_mode = preset.compact_mode;
+    next.overlay_text_size = preset.overlay_text_size;
+    next.show_status_badges = preset.show_status_badges;
+    next.stale_threshold_minutes = preset.stale_threshold_minutes;
+    next.long_press_ms = preset.long_press_ms;
+    if (preset.overlay_actions) {
+      next.overlay_actions = { ...next.overlay_actions, ...preset.overlay_actions };
+    }
+    this._emitConfig(next);
+  };
+
+  _exportConfigToJson = () => JSON.stringify(this._config, null, 2);
+
+  _importConfigFromJson = (jsonText) => {
+    const raw = JSON.parse(String(jsonText || ""));
+    if (!raw || typeof raw !== "object") {
+      throw new Error("invalid_json");
+    }
+    const next = normalizeConfig(raw);
+    if (next.type !== `custom:${CARD_TYPE}`) {
+      next.type = `custom:${CARD_TYPE}`;
+    }
+    this._emitConfig(next);
+    return next;
+  };
+
   _onEditorChange(ev) {
     const target = ev?.target;
     if (!target) return;
     const group = target?.dataset?.group;
     const key = target?.dataset?.key;
-    if (group && key && target.tagName === "INPUT") {
-      this._onEntityChanged(group, key, target.value || "");
+    const field = target?.dataset?.field;
+    if (group && key) {
+      if (group === "overlay_actions") {
+        this._onOverlayActionChanged(key, field, target?.value || "");
+      } else {
+        this._onEntityChanged(group, key, target?.value || "");
+      }
       return;
     }
     if (typeof target.id !== "string") return;
@@ -1097,12 +1596,42 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     if (target.id === "text_size") this._onTextSizeChanged(ev);
     if (target.id === "title") this._onTitleChanged(ev);
     if (target.id === "image") this._onImageChanged(ev);
+    if (target.id === "compact_mode") this._onCompactModeChanged(ev);
+    if (target.id === "show_status_badges") this._onShowStatusBadgesChanged(ev);
+    if (target.id === "stale_threshold_minutes") this._onStaleThresholdChanged(ev);
+    if (target.id === "long_press_ms") this._onLongPressChanged(ev);
+    if (target.id === "config_json") this._configJsonBuffer = String(target?.value || "");
   }
 
   _onEditorClick(ev) {
     const target = ev?.target;
     if (!target || typeof target.id !== "string") return;
     if (target.id === "autofill") this._onAutofill();
+    if (target.id === "apply_preset") {
+      const presetInput = this.shadowRoot?.querySelector?.("#preset");
+      const presetName = presetInput?.value || "standard";
+      this._onPresetApply(presetName);
+      return;
+    }
+    if (target.id === "export_config") {
+      this._configJsonBuffer = this._exportConfigToJson();
+      this._lastError = "";
+      this._lastInfo = this._t("export_ready");
+      this._render();
+      return;
+    }
+    if (target.id === "import_config") {
+      try {
+        this._lastError = "";
+        this._lastInfo = "";
+        this._importConfigFromJson(this._configJsonBuffer);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this._lastError = `${this._t("import_failed")}: ${message}`;
+        this._lastInfo = "";
+        this._render();
+      }
+    }
   }
 
   _onPickerValueChanged(ev) {
@@ -1137,9 +1666,25 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const safeTitle = escapeAttribute(this._config.title || "");
     const safeImage = escapeAttribute(this._config.image || "");
     const safeError = this._lastError ? escapeHtml(this._lastError) : "";
+    const safeInfo = this._lastInfo ? escapeHtml(this._lastInfo) : "";
     const textSize = OVERLAY_TEXT_SIZE_OPTIONS.includes(this._config.overlay_text_size)
       ? this._config.overlay_text_size
       : "auto";
+    const compactMode = Boolean(this._config.compact_mode);
+    const showStatusBadges = Boolean(this._config.show_status_badges);
+    const staleThresholdMinutes = clampNumber(
+      this._config.stale_threshold_minutes,
+      STALE_MINUTES_RANGE.min,
+      STALE_MINUTES_RANGE.max,
+      DEFAULT_STALE_MINUTES,
+    );
+    const longPressMs = clampNumber(
+      this._config.long_press_ms,
+      LONG_PRESS_RANGE.min,
+      LONG_PRESS_RANGE.max,
+      DEFAULT_LONG_PRESS_MS,
+    );
+    const safeConfigJson = escapeHtml(this._configJsonBuffer || "");
 
     const sensorEntityIds = this._hass?.states
       ? Object.keys(this._hass.states).filter((entityId) => entityId.startsWith("sensor.")).sort()
@@ -1147,6 +1692,32 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
     const binaryEntityIds = this._hass?.states
       ? Object.keys(this._hass.states).filter((entityId) => entityId.startsWith("binary_sensor.")).sort()
       : [];
+    const actionRows = ALL_OVERLAYS.map((overlay) => {
+      const defaults = resolveOverlayActionConfig(this._config, overlay.key);
+      const displayName = overlay.kind === "sensor"
+        ? `${overlay.label} - ${this._defaultSensorName(overlay.key, overlay.name)}`
+        : `${overlay.key.toUpperCase()} - ${this._defaultBinaryName(overlay.key, overlay.text)}`;
+      return `
+      <div class="row">
+        <div class="label">${escapeHtml(displayName)}</div>
+        <div class="grid3">
+          <select data-group="overlay_actions" data-key="${overlay.key}" data-field="tap_action">
+            <option value="more-info" ${defaults.tap_action === "more-info" ? "selected" : ""}>${escapeHtml(this._t("action_more_info"))}</option>
+            <option value="navigate" ${defaults.tap_action === "navigate" ? "selected" : ""}>${escapeHtml(this._t("action_navigate"))}</option>
+            <option value="toggle" ${defaults.tap_action === "toggle" ? "selected" : ""}>${escapeHtml(this._t("action_toggle"))}</option>
+            <option value="none" ${defaults.tap_action === "none" ? "selected" : ""}>${escapeHtml(this._t("action_none"))}</option>
+          </select>
+          <select data-group="overlay_actions" data-key="${overlay.key}" data-field="hold_action">
+            <option value="more-info" ${defaults.hold_action === "more-info" ? "selected" : ""}>${escapeHtml(this._t("action_more_info"))}</option>
+            <option value="navigate" ${defaults.hold_action === "navigate" ? "selected" : ""}>${escapeHtml(this._t("action_navigate"))}</option>
+            <option value="toggle" ${defaults.hold_action === "toggle" ? "selected" : ""}>${escapeHtml(this._t("action_toggle"))}</option>
+            <option value="none" ${defaults.hold_action === "none" ? "selected" : ""}>${escapeHtml(this._t("action_none"))}</option>
+          </select>
+          <input type="text" data-group="overlay_actions" data-key="${overlay.key}" data-field="navigation_path" value="${escapeAttribute(defaults.navigation_path || "")}" placeholder="${escapeAttribute(this._t("navigation_path"))}" />
+        </div>
+      </div>
+      `;
+    }).join("");
     const sensorRows = SENSOR_OVERLAYS.map((overlay) => `
       <div class="row">
         <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(this._defaultSensorName(overlay.key, overlay.name))}</div>
@@ -1195,6 +1766,12 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           gap: 10px;
         }
 
+        .grid3 {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1.2fr;
+          gap: 6px;
+        }
+
         .field {
           display: grid;
           gap: 6px;
@@ -1209,7 +1786,7 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           font: inherit;
         }
 
-        input, select {
+        input, select, textarea {
           width: 100%;
           box-sizing: border-box;
           padding: 8px;
@@ -1217,6 +1794,13 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           border: 1px solid rgba(120, 120, 120, 0.45);
           background: var(--card-background-color);
           color: var(--primary-text-color);
+        }
+
+        textarea {
+          min-height: 120px;
+          resize: vertical;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 12px;
         }
 
         button {
@@ -1246,6 +1830,11 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
         .error {
           color: var(--error-color);
+          font-size: 12px;
+        }
+
+        .info {
+          color: var(--secondary-text-color);
           font-size: 12px;
         }
 
@@ -1296,6 +1885,66 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
           <div class="notice">${escapeHtml(this._t("entities_notice_before"))}<code>solvis_remote</code>${escapeHtml(this._t("entities_notice_after"))}</div>
           ${this._loadingRegistry ? `<div class="notice">${escapeHtml(this._t("loading_entities"))}</div>` : ""}
           ${safeError ? `<div class="error">${safeError}</div>` : ""}
+          ${safeInfo ? `<div class="info">${safeInfo}</div>` : ""}
+        </div>
+
+        <div class="block">
+          <h3>${escapeHtml(this._t("display_options"))}</h3>
+          <div class="grid2">
+            <label class="field">
+              <span>${escapeHtml(this._t("compact_mode"))}</span>
+              <input id="compact_mode" type="checkbox" ${compactMode ? "checked" : ""} />
+            </label>
+            <label class="field">
+              <span>${escapeHtml(this._t("show_status_badges"))}</span>
+              <input id="show_status_badges" type="checkbox" ${showStatusBadges ? "checked" : ""} />
+            </label>
+          </div>
+          <div class="grid2">
+            <label class="field">
+              <span>${escapeHtml(this._t("stale_threshold_minutes"))}</span>
+              <input id="stale_threshold_minutes" type="number" min="${STALE_MINUTES_RANGE.min}" max="${STALE_MINUTES_RANGE.max}" value="${escapeAttribute(staleThresholdMinutes)}" />
+            </label>
+            <label class="field">
+              <span>${escapeHtml(this._t("long_press_ms"))}</span>
+              <input id="long_press_ms" type="number" min="${LONG_PRESS_RANGE.min}" max="${LONG_PRESS_RANGE.max}" value="${escapeAttribute(longPressMs)}" />
+            </label>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>${escapeHtml(this._t("interaction_presets"))}</h3>
+          <div class="grid2">
+            <div class="field">
+              <label>${escapeHtml(this._t("preset"))}</label>
+              <select id="preset">
+                <option value="standard">${escapeHtml(this._t("preset_standard"))}</option>
+                <option value="compact">${escapeHtml(this._t("preset_compact"))}</option>
+                <option value="service">${escapeHtml(this._t("preset_service"))}</option>
+              </select>
+            </div>
+            <div class="field" style="align-content:end;">
+              <button id="apply_preset" type="button">${escapeHtml(this._t("apply_preset"))}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3>${escapeHtml(this._t("overlay_actions"))}</h3>
+          <div class="label">${escapeHtml(this._t("tap_action"))} / ${escapeHtml(this._t("hold_action"))} / ${escapeHtml(this._t("navigation_path"))}</div>
+          ${actionRows}
+        </div>
+
+        <div class="block">
+          <h3>${escapeHtml(this._t("import_export"))}</h3>
+          <label class="field">
+            <span>${escapeHtml(this._t("config_json"))}</span>
+            <textarea id="config_json" placeholder="${escapeAttribute(this._t("config_json_placeholder"))}">${safeConfigJson}</textarea>
+          </label>
+          <div class="grid2">
+            <button id="export_config" type="button">${escapeHtml(this._t("export_config"))}</button>
+            <button id="import_config" type="button">${escapeHtml(this._t("import_config"))}</button>
+          </div>
         </div>
 
         <div class="block">

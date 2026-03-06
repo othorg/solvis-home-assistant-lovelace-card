@@ -12,6 +12,7 @@ https://github.com/othorg/solvis-ha-integration
 - Fully frontend-configurable via Lovelace Card Editor (no CLI/YAML mapping required)
 - Auto-detects and pre-fills entities from `solvis_remote` integration
 - Supports multiple Solvis systems (system selector in editor)
+- Clean canvas-based overlay rendering for sharper labels and status badges
 - 12 sensor overlays + 5 binary status highlights
 
 ## Installation (HACS)
@@ -42,6 +43,8 @@ Use the Lovelace UI card editor.
 - You can override every mapped sensor/binary sensor in the editor.
 - Entity mapping is always editable in the UI. If `ha-entity-picker` is unavailable, the editor falls back to plain text input fields.
 - Overlay text size is configurable in the editor (`Auto`, `Klein`, `Mittel`, `Gross`).
+- Overlay labels are configurable per sensor and per binary status directly in the editor.
+- Sensor and binary entity inputs provide picker-like suggestions via datalist from current HA states.
 - If the base image is not shown in your installation, set `Basisbild URL` explicitly in the card editor, for example:
 `/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg`
 

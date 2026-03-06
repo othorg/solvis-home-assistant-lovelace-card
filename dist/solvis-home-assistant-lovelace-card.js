@@ -89,6 +89,8 @@ function normalizeConfig(config) {
     image: "",
     system_id: "",
     overlay_text_size: "auto",
+    sensor_labels: {},
+    binary_labels: {},
     ...rest,
     entities: { ...(entities || {}) },
     binary_entities: { ...(binaryEntities || {}) },
@@ -157,9 +159,10 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._domReady = false;
     this._cardEl = null;
     this._imgEl = null;
+    this._canvasEl = null;
+    this._canvasCtx = null;
     this._wrapperEl = null;
-    this._sensorNodes = new Map();
-    this._binaryNodes = new Map();
+    this._overlayFontPx = 12;
     this._cachedTrackedEntityIds = null;
     this._resizeObserver = null;
   }
@@ -234,18 +237,31 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     return this._config.binary_entities?.[key] || "";
   }
 
+  _resolveSensorLabel(overlay) {
+    const custom = this._config.sensor_labels?.[overlay.key];
+    const label = String(custom ?? "").trim();
+    return label || overlay.label;
+  }
+
+  _resolveBinaryLabel(overlay) {
+    const custom = this._config.binary_labels?.[overlay.key];
+    const label = String(custom ?? "").trim();
+    return label || overlay.text;
+  }
+
   _formatSensorOverlayText(overlay) {
     const entityId = this._getSensorEntityId(overlay.key);
     const stateObj = entityId ? this._hass?.states?.[entityId] : undefined;
+    const label = this._resolveSensorLabel(overlay);
 
     if (!stateObj || isStateUnavailable(stateObj)) {
-      return `-- ${overlay.label} ${overlay.name}`;
+      return `-- ${label}`;
     }
 
     const rawValue = stateObj.state;
     const value = formatNumericIfPossible(rawValue);
     const formatted = overlay.format.replace("{v}", value ?? "--");
-    return `${formatted} ${overlay.label} ${overlay.name}`;
+    return `${formatted} ${label}`;
   }
 
   _isBinaryOn(overlay) {
@@ -315,40 +331,18 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           display: block;
         }
 
-        .overlay {
+        .overlay-canvas {
           position: absolute;
-          transform: translate(-50%, -50%);
-          font-size: var(--overlay-font-size, 12px);
-          line-height: 1.2;
-          border: 1px solid rgba(92, 92, 92, 0.45);
-          border-radius: 2px;
-          font-weight: 600;
-          white-space: nowrap;
-          backdrop-filter: blur(0.5px);
-        }
-
-        .sensor {
-          background: rgba(255, 255, 255, 0.78);
-          color: rgba(28, 28, 28, 0.95);
-          padding: 3px 6px;
-        }
-
-        .binary {
-          padding: 2px 7px;
-          color: rgba(50, 50, 50, 0.95);
-          background: rgba(235, 235, 235, 0.72);
-          border-color: rgba(110, 110, 110, 0.55);
-        }
-
-        .binary.on {
-          background: rgba(170, 235, 145, 0.85);
-          border-color: rgba(85, 150, 70, 0.85);
-          color: rgba(33, 80, 31, 0.96);
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
         }
       </style>
       <ha-card>
         <div class="wrapper">
           <img class="base" alt="Solvis Anlagenschema" />
+          <canvas class="overlay-canvas"></canvas>
         </div>
       </ha-card>
     `;
@@ -356,32 +350,16 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._cardEl = this.shadowRoot.querySelector("ha-card");
     this._wrapperEl = this.shadowRoot.querySelector(".wrapper");
     this._imgEl = this.shadowRoot.querySelector("img.base");
+    this._canvasEl = this.shadowRoot.querySelector("canvas.overlay-canvas");
+    this._canvasCtx = this._canvasEl?.getContext?.("2d") || null;
 
-    if (!this._wrapperEl || !this._imgEl) return;
+    if (!this._wrapperEl || !this._imgEl || !this._canvasEl || !this._canvasCtx) return;
     this._imgEl.onerror = this._handleImageError;
+    this._imgEl.onload = () => this._renderOverlayCanvas();
     this._updateOverlayScale();
     if (typeof ResizeObserver !== "undefined") {
       this._resizeObserver = new ResizeObserver(() => this._updateOverlayScale());
       this._resizeObserver.observe(this._wrapperEl);
-    }
-
-    for (const overlay of SENSOR_OVERLAYS) {
-      const node = document.createElement("div");
-      node.className = "overlay sensor";
-      node.style.left = `${overlay.relPos[0] * 100}%`;
-      node.style.top = `${overlay.relPos[1] * 100}%`;
-      this._wrapperEl.appendChild(node);
-      this._sensorNodes.set(overlay.key, node);
-    }
-
-    for (const overlay of BINARY_OVERLAYS) {
-      const node = document.createElement("div");
-      node.className = "overlay binary off";
-      node.style.left = `${overlay.relPos[0] * 100}%`;
-      node.style.top = `${overlay.relPos[1] * 100}%`;
-      node.textContent = overlay.text;
-      this._wrapperEl.appendChild(node);
-      this._binaryNodes.set(overlay.key, node);
     }
 
     this._domReady = true;
@@ -405,6 +383,95 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     } else if (this._wrapperEl.style) {
       this._wrapperEl.style["--overlay-font-size"] = `${fontPx}px`;
     }
+    this._overlayFontPx = fontPx;
+    this._renderOverlayCanvas();
+  }
+
+  _drawLabeledBox(ctx, x, y, text, options) {
+    const {
+      fillStyle,
+      strokeStyle,
+      textStyle,
+      padX,
+      padY,
+    } = options;
+
+    const metrics = ctx.measureText(text);
+    const ascent = metrics.actualBoundingBoxAscent || (this._overlayFontPx * 0.75);
+    const descent = metrics.actualBoundingBoxDescent || (this._overlayFontPx * 0.25);
+    const textWidth = metrics.width;
+    const textHeight = ascent + descent;
+
+    const boxX = x - (textWidth / 2) - padX;
+    const boxY = y - (textHeight / 2) - padY;
+    const boxW = textWidth + (padX * 2);
+    const boxH = textHeight + (padY * 2);
+
+    ctx.fillStyle = fillStyle;
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = Math.max(1, this._overlayFontPx * 0.08);
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+    ctx.fillStyle = textStyle;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, x, y);
+  }
+
+  _renderOverlayCanvas() {
+    if (!this._canvasEl || !this._canvasCtx || !this._wrapperEl) return;
+
+    const width = this._wrapperEl.clientWidth || this._wrapperEl.offsetWidth || 0;
+    const height = this._wrapperEl.clientHeight || this._wrapperEl.offsetHeight || 0;
+    if (!width || !height) return;
+
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    const canvasWidth = Math.max(1, Math.round(width * dpr));
+    const canvasHeight = Math.max(1, Math.round(height * dpr));
+
+    if (this._canvasEl.width !== canvasWidth || this._canvasEl.height !== canvasHeight) {
+      this._canvasEl.width = canvasWidth;
+      this._canvasEl.height = canvasHeight;
+    }
+
+    const ctx = this._canvasCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = `600 ${this._overlayFontPx}px "DejaVu Sans", Arial, sans-serif`;
+    ctx.imageSmoothingEnabled = true;
+
+    const sensorPadX = Math.max(3, Math.round(this._overlayFontPx * 0.45));
+    const sensorPadY = Math.max(2, Math.round(this._overlayFontPx * 0.28));
+    const binaryPadX = Math.max(4, Math.round(this._overlayFontPx * 0.55));
+    const binaryPadY = Math.max(2, Math.round(this._overlayFontPx * 0.25));
+
+    for (const overlay of SENSOR_OVERLAYS) {
+      const text = this._formatSensorOverlayText(overlay);
+      const x = overlay.relPos[0] * width;
+      const y = overlay.relPos[1] * height;
+      this._drawLabeledBox(ctx, x, y, text, {
+        fillStyle: "rgba(255,255,255,0.78)",
+        strokeStyle: "rgba(92,92,92,0.45)",
+        textStyle: "rgba(28,28,28,0.95)",
+        padX: sensorPadX,
+        padY: sensorPadY,
+      });
+    }
+
+    for (const overlay of BINARY_OVERLAYS) {
+      const isOn = this._isBinaryOn(overlay);
+      const label = this._resolveBinaryLabel(overlay);
+      const x = overlay.relPos[0] * width;
+      const y = overlay.relPos[1] * height;
+      this._drawLabeledBox(ctx, x, y, label, {
+        fillStyle: isOn ? "rgba(170,235,145,0.85)" : "rgba(235,235,235,0.72)",
+        strokeStyle: isOn ? "rgba(85,150,70,0.85)" : "rgba(110,110,110,0.55)",
+        textStyle: isOn ? "rgba(33,80,31,0.96)" : "rgba(50,50,50,0.95)",
+        padX: binaryPadX,
+        padY: binaryPadY,
+      });
+    }
   }
 
   _updateCardDom() {
@@ -421,21 +488,8 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       this._imgEl.dataset.src = imageUrl;
       this._imgEl.src = imageUrl;
     }
-
-    for (const overlay of SENSOR_OVERLAYS) {
-      const node = this._sensorNodes.get(overlay.key);
-      if (!node) continue;
-      node.textContent = this._formatSensorOverlayText(overlay);
-    }
-
-    for (const overlay of BINARY_OVERLAYS) {
-      const node = this._binaryNodes.get(overlay.key);
-      if (!node) continue;
-      const isOn = this._isBinaryOn(overlay);
-      node.classList.toggle("on", isOn);
-      node.classList.toggle("off", !isOn);
-      node.textContent = overlay.text;
-    }
+    this._updateOverlayScale();
+    this._renderOverlayCanvas();
   }
 
   _render() {
@@ -598,11 +652,10 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
   _onEntityChanged = (group, key, value) => {
     const next = normalizeConfig(this._config);
-    if (group === "entities") {
-      next.entities[key] = value || "";
-    } else {
-      next.binary_entities[key] = value || "";
+    if (!next[group] || typeof next[group] !== "object") {
+      next[group] = {};
     }
+    next[group][key] = value || "";
     this._emitConfig(next);
   };
 
@@ -670,24 +723,26 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       ? this._config.overlay_text_size
       : "auto";
 
-    const hasEntityPicker = typeof customElements !== "undefined"
-      && Boolean(customElements.get("ha-entity-picker"));
+    const sensorEntityIds = this._hass?.states
+      ? Object.keys(this._hass.states).filter((entityId) => entityId.startsWith("sensor.")).sort()
+      : [];
+    const binaryEntityIds = this._hass?.states
+      ? Object.keys(this._hass.states).filter((entityId) => entityId.startsWith("binary_sensor.")).sort()
+      : [];
 
     const sensorRows = SENSOR_OVERLAYS.map((overlay) => `
       <div class="row">
         <div class="label">${escapeHtml(overlay.label)} - ${escapeHtml(overlay.name)}</div>
-        ${hasEntityPicker
-    ? `<ha-entity-picker data-group="entities" data-key="${overlay.key}"></ha-entity-picker>`
-    : `<input type="text" data-group="entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.entities?.[overlay.key] || "")}" placeholder="sensor.entity_id" />`}
+        <input type="text" data-group="entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.entities?.[overlay.key] || "")}" placeholder="sensor.entity_id" list="sensor-entity-options" />
+        <input type="text" data-group="sensor_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.sensor_labels?.[overlay.key] || "")}" placeholder="Bezeichner (Standard: ${escapeAttribute(overlay.label)})" />
       </div>
     `).join("");
 
     const binaryRows = BINARY_OVERLAYS.map((overlay) => `
       <div class="row">
         <div class="label">${escapeHtml(overlay.key.toUpperCase())} - ${escapeHtml(overlay.text)}</div>
-        ${hasEntityPicker
-    ? `<ha-entity-picker data-group="binary_entities" data-key="${overlay.key}"></ha-entity-picker>`
-    : `<input type="text" data-group="binary_entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_entities?.[overlay.key] || "")}" placeholder="binary_sensor.entity_id" />`}
+        <input type="text" data-group="binary_entities" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_entities?.[overlay.key] || "")}" placeholder="binary_sensor.entity_id" list="binary-entity-options" />
+        <input type="text" data-group="binary_labels" data-key="${overlay.key}" value="${escapeAttribute(this._config.binary_labels?.[overlay.key] || "")}" placeholder="Bezeichner (Standard: ${escapeAttribute(overlay.text)})" />
       </div>
     `).join("");
 
@@ -828,33 +883,23 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
 
         <div class="block">
           <h3>Sensoren (Werte)</h3>
+          <datalist id="sensor-entity-options">
+            ${sensorEntityIds.map((entityId) => `<option value="${escapeAttribute(entityId)}"></option>`).join("")}
+          </datalist>
           ${sensorRows}
         </div>
 
         <div class="block">
           <h3>Binärsensoren (Status)</h3>
+          <datalist id="binary-entity-options">
+            ${binaryEntityIds.map((entityId) => `<option value="${escapeAttribute(entityId)}"></option>`).join("")}
+          </datalist>
           ${binaryRows}
         </div>
       </div>
     `;
 
     this._ensureEditorEventHandlers();
-
-    for (const picker of this.shadowRoot.querySelectorAll("ha-entity-picker")) {
-      const group = picker.dataset.group;
-      const key = picker.dataset.key;
-      const includeDomains = group === "entities" ? ["sensor"] : ["binary_sensor"];
-      const value = group === "entities"
-        ? (this._config.entities?.[key] || "")
-        : (this._config.binary_entities?.[key] || "");
-
-      picker.hass = this._hass;
-      picker.includeDomains = includeDomains;
-      picker.value = value;
-      picker.allowCustomEntity = true;
-      picker.removeEventListener("value-changed", this._boundOnPickerValueChanged);
-      picker.addEventListener("value-changed", this._boundOnPickerValueChanged);
-    }
   }
 
   disconnectedCallback() {

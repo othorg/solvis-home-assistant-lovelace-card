@@ -89,6 +89,31 @@ function makeNode(tagName = "div") {
     node[name] = String(value);
     if (name === "id") node.id = String(value);
   };
+  if (node.tagName === "CANVAS") {
+    node.width = 0;
+    node.height = 0;
+    node.getContext = () => ({
+      setTransform() {},
+      clearRect() {},
+      fillRect() {},
+      strokeRect() {},
+      fillText() {},
+      measureText(text) {
+        return {
+          width: String(text ?? "").length * 6,
+          actualBoundingBoxAscent: 8,
+          actualBoundingBoxDescent: 2,
+        };
+      },
+      font: "",
+      lineWidth: 1,
+      fillStyle: "",
+      strokeStyle: "",
+      textAlign: "center",
+      textBaseline: "middle",
+      imageSmoothingEnabled: true,
+    });
+  }
   return node;
 }
 
@@ -121,9 +146,17 @@ class FakeShadowRoot extends FakeEventTarget {
       img.dataset = {};
       img.src = "";
       img.onerror = null;
+      img.onload = null;
       this._nodes["img.base"] = img;
       if (this._nodes[".wrapper"]) {
         this._nodes[".wrapper"].appendChild(img);
+      }
+    }
+    if (this._html.includes('class="overlay-canvas"')) {
+      const canvas = makeNode("canvas");
+      this._nodes["canvas.overlay-canvas"] = canvas;
+      if (this._nodes[".wrapper"]) {
+        this._nodes[".wrapper"].appendChild(canvas);
       }
     }
 
@@ -542,4 +575,45 @@ test("text size change from editor updates config", () => {
 
   editor._onTextSizeChanged({ target: { value: "invalid" } });
   assert.equal(emittedConfig.overlay_text_size, "auto");
+});
+
+test("sensor label override is applied in overlay text", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    entities: { s10: "sensor.solvis_temp" },
+    sensor_labels: { s10: "AT" },
+  });
+  card.hass = {
+    states: {
+      "sensor.solvis_temp": { state: "12.3" },
+    },
+  };
+
+  const text = card._formatSensorOverlayText({ key: "s10", format: "{v}°C", label: "S10" });
+  assert.equal(text, "12.3°C AT");
+});
+
+test("editor includes sensor picker datalist options from hass states", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._hass = {
+    states: {
+      "sensor.one": { state: "1" },
+      "sensor.two": { state: "2" },
+      "binary_sensor.pump": { state: "off" },
+    },
+  };
+  editor._render();
+
+  const html = editor.shadowRoot.innerHTML;
+  assert.match(html, /datalist id="sensor-entity-options"/);
+  assert.match(html, /value="sensor\.one"/);
+  assert.match(html, /value="sensor\.two"/);
 });

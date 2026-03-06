@@ -2,6 +2,9 @@
 
 Custom Lovelace card for Home Assistant that renders a Solvis-style system diagram with live overlays.
 
+This project is the corresponding Lovelace card for the Solvis Home Assistant integration:
+`solvis-ha-integration` / `solvis_remote`.
+
 ## Features
 
 - Same visual concept as `solvis-ha-integration` image rendering

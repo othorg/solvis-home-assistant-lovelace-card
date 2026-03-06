@@ -60,5 +60,6 @@ npm test
 The card ships with the same Solvis icon style used in `solvis-ha-integration`:
 
 - [assets/solvis-icon.png](assets/solvis-icon.png)
+- [dist/solvis-icon.png](dist/solvis-icon.png)
 
 This icon is exposed in the card metadata (`window.customCards`) and is used by Home Assistant where custom card icons are supported.

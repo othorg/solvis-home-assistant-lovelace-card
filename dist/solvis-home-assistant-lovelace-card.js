@@ -3,7 +3,7 @@
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
 const CARD_VERSION = "0.1.0";
-const CARD_ICON_URL = "/hacsfiles/solvis-home-assistant-lovelace-card/assets/solvis-icon.png";
+const CARD_ICON_URL = "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-icon.png";
 
 const DEFAULT_IMAGE_CANDIDATES = [
   "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg",

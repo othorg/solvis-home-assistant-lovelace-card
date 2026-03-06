@@ -1,0 +1,6 @@
+{
+  "name": "Solvis Home Assistant Lovelace Card",
+  "filename": "solvis-home-assistant-lovelace-card.js",
+  "render_readme": true,
+  "content_in_root": false
+}

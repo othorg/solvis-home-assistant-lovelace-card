@@ -43,6 +43,11 @@ Use the Lovelace UI card editor.
 - If the base image is not shown in your installation, set `Basisbild URL` explicitly in the card editor, for example:
 `/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg`
 
+Image loading behavior:
+
+- The card auto-detects its own script base URL and tries matching image paths first.
+- Additional fallback paths for HACS and `/local/community` are included.
+
 ## Card Type
 
 `custom:solvis-home-assistant-lovelace-card`

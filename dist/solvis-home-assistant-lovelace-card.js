@@ -2,10 +2,36 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.1.0";
-const CARD_ICON_URL = "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-icon.png";
+const CARD_VERSION = "0.1.2";
+
+function detectScriptBasePath() {
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
+    return "";
+  }
+
+  const scriptName = "solvis-home-assistant-lovelace-card.js";
+  for (const script of document.querySelectorAll("script[src]")) {
+    const src = script.getAttribute?.("src") || script.src || "";
+    if (!src) continue;
+    const clean = src.split("?")[0];
+    if (!clean.endsWith(scriptName)) continue;
+    const lastSlash = clean.lastIndexOf("/");
+    if (lastSlash < 0) continue;
+    return clean.slice(0, lastSlash);
+  }
+  return "";
+}
+
+const SCRIPT_BASE_PATH = detectScriptBasePath();
+const CARD_ICON_URL = SCRIPT_BASE_PATH
+  ? `${SCRIPT_BASE_PATH}/solvis-icon.png`
+  : "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-icon.png";
 
 const DEFAULT_IMAGE_CANDIDATES = [
+  ...(SCRIPT_BASE_PATH ? [
+    `${SCRIPT_BASE_PATH}/solvis-home-assistant-lovelace-card-base.jpg`,
+    `${SCRIPT_BASE_PATH}/assets/solvis-home-assistant-lovelace-card-base.jpg`,
+  ] : []),
   "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg",
   "/hacsfiles/solvis-home-assistant-lovelace-card/dist/solvis-home-assistant-lovelace-card-base.jpg",
   "/local/community/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg",
@@ -127,6 +153,7 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._wrapperEl = null;
     this._sensorNodes = new Map();
     this._binaryNodes = new Map();
+    this._cachedTrackedEntityIds = null;
   }
 
   static getStubConfig() {
@@ -145,8 +172,15 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       throw new Error(`Invalid configuration for ${CARD_TYPE}`);
     }
     this._config = normalizeConfig(config);
+    this._cachedTrackedEntityIds = null;
     this._imageIdx = 0;
     this._render();
+  }
+
+  connectedCallback() {
+    if (this._hass) {
+      this._render();
+    }
   }
 
   set hass(hass) {
@@ -175,7 +209,13 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     if (this._imageIdx < DEFAULT_IMAGE_CANDIDATES.length - 1) {
       this._imageIdx += 1;
       this._render();
+      return;
     }
+    // Final fallback exhausted: keep overlays visible and report candidates for support/debugging.
+    console.error(
+      `${CARD_NAME}: failed to load base image from all fallback paths`,
+      DEFAULT_IMAGE_CANDIDATES,
+    );
   };
 
   _getSensorEntityId(key) {
@@ -208,6 +248,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   _trackedEntityIds() {
+    if (this._cachedTrackedEntityIds) {
+      return this._cachedTrackedEntityIds;
+    }
     const ids = new Set();
     for (const entityId of Object.values(this._config.entities || {})) {
       if (entityId) ids.add(entityId);
@@ -215,7 +258,8 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     for (const entityId of Object.values(this._config.binary_entities || {})) {
       if (entityId) ids.add(entityId);
     }
-    return [...ids];
+    this._cachedTrackedEntityIds = [...ids];
+    return this._cachedTrackedEntityIds;
   }
 
   _hasRelevantStateChanges(previousHass, nextHass) {
@@ -777,6 +821,10 @@ console.info(`%c${CARD_NAME} %c${CARD_VERSION}`, "color:#0b75b7;font-weight:700"
 if (typeof process !== "undefined" && process?.env?.SOLVIS_CARD_TEST === "1") {
   globalThis.__SOLVIS_CARD_TEST__ = {
     CARD_TYPE,
+    CARD_VERSION,
+    CARD_ICON_URL,
+    SCRIPT_BASE_PATH,
+    DEFAULT_IMAGE_CANDIDATES,
     normalizeConfig,
     buildSystemEntityMap,
     SolvisHomeAssistantLovelaceCard,

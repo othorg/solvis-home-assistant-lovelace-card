@@ -180,7 +180,8 @@ class FakeCustomEvent {
   }
 }
 
-function loadCardRuntime() {
+function loadCardRuntime(options = {}) {
+  const { scriptSrc = "" } = options;
   const registry = new Map();
   const customElements = {
     define(name, klass) {
@@ -198,6 +199,16 @@ function loadCardRuntime() {
     document: {
       createElement(tagName) {
         return makeNode(tagName);
+      },
+      querySelectorAll(selector) {
+        if (selector !== "script[src]" || !scriptSrc) return [];
+        return [{
+          src: scriptSrc,
+          getAttribute(name) {
+            if (name === "src") return scriptSrc;
+            return null;
+          },
+        }];
       },
     },
     customElements,
@@ -394,4 +405,60 @@ test("delegated picker value-changed updates corresponding mapping", () => {
     emittedConfig.entities.s17,
     "sensor.solvis_solaranlage_durchfluss_solar",
   );
+});
+
+test("detects script base path for icon and image candidates", () => {
+  const runtime = loadCardRuntime({
+    scriptSrc: "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card.js?v=1",
+  });
+
+  assert.equal(
+    runtime.SCRIPT_BASE_PATH,
+    "/hacsfiles/solvis-home-assistant-lovelace-card",
+  );
+  assert.equal(
+    runtime.CARD_ICON_URL,
+    "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-icon.png",
+  );
+  assert.equal(
+    runtime.DEFAULT_IMAGE_CANDIDATES[0],
+    "/hacsfiles/solvis-home-assistant-lovelace-card/solvis-home-assistant-lovelace-card-base.jpg",
+  );
+});
+
+test("tracked entity ids are cached and invalidated on setConfig", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    entities: { s10: "sensor.one" },
+    binary_entities: { a1: "binary_sensor.one" },
+  });
+
+  const first = card._trackedEntityIds();
+  const second = card._trackedEntityIds();
+  assert.strictEqual(first, second, "expected cached array reference");
+
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    entities: { s10: "sensor.two" },
+    binary_entities: { a1: "binary_sensor.two" },
+  });
+
+  const third = card._trackedEntityIds();
+  assert.notStrictEqual(third, first, "cache must be invalidated by setConfig");
+  assert.equal(
+    JSON.stringify(third.sort()),
+    JSON.stringify(["binary_sensor.two", "sensor.two"].sort()),
+  );
+});
+
+test("card and package versions are in sync", () => {
+  const runtime = loadCardRuntime();
+  const pkg = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"),
+  );
+  assert.equal(runtime.CARD_VERSION, pkg.version);
 });

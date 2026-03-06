@@ -115,6 +115,12 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._config = normalizeConfig({});
     this._hass = undefined;
     this._imageIdx = 0;
+    this._domReady = false;
+    this._cardEl = null;
+    this._imgEl = null;
+    this._wrapperEl = null;
+    this._sensorNodes = new Map();
+    this._binaryNodes = new Map();
   }
 
   static getStubConfig() {
@@ -146,7 +152,11 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 10;
+    const width = this.offsetWidth || this.getBoundingClientRect().width || 0;
+    if (!width) return 10;
+    const imageHeight = this._wrapperEl?.offsetHeight || ((width * 720) / 1080);
+    const headerHeight = 56;
+    return Math.max(6, Math.ceil((imageHeight + headerHeight) / 50));
   }
 
   _resolveImageUrl() {
@@ -212,38 +222,12 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   disconnectedCallback() {
-    const img = this.shadowRoot?.querySelector("img.base");
-    if (img) img.onerror = null;
+    if (this._imgEl) this._imgEl.onerror = null;
     this._hass = undefined;
   }
 
-  _render() {
-    if (!this.shadowRoot) return;
-
-    const title = this._config.title || "Anlagenschema";
-    const imageUrl = this._resolveImageUrl();
-    const safeTitle = escapeAttribute(title);
-    const safeImageUrl = escapeAttribute(imageUrl);
-
-    const sensorHtml = SENSOR_OVERLAYS.map((overlay) => {
-      const text = this._formatSensorOverlayText(overlay);
-      const safeText = escapeHtml(text);
-      return `
-        <div class="overlay sensor" style="left:${overlay.relPos[0] * 100}%; top:${overlay.relPos[1] * 100}%;">
-          ${safeText}
-        </div>
-      `;
-    }).join("");
-
-    const binaryHtml = BINARY_OVERLAYS.map((overlay) => {
-      const isOn = this._isBinaryOn(overlay);
-      const activeClass = isOn ? "on" : "off";
-      return `
-        <div class="overlay binary ${activeClass}" style="left:${overlay.relPos[0] * 100}%; top:${overlay.relPos[1] * 100}%;">
-          ${escapeHtml(overlay.text)}
-        </div>
-      `;
-    }).join("");
+  _ensureCardDom() {
+    if (!this.shadowRoot || this._domReady) return;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -300,19 +284,77 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           color: rgba(33, 80, 31, 0.96);
         }
       </style>
-      <ha-card header="${safeTitle}">
+      <ha-card>
         <div class="wrapper">
-          <img class="base" src="${safeImageUrl}" alt="Solvis Anlagenschema" />
-          ${sensorHtml}
-          ${binaryHtml}
+          <img class="base" alt="Solvis Anlagenschema" />
         </div>
       </ha-card>
     `;
 
-    const img = this.shadowRoot.querySelector("img.base");
-    if (img) {
-      img.onerror = this._handleImageError;
+    this._cardEl = this.shadowRoot.querySelector("ha-card");
+    this._wrapperEl = this.shadowRoot.querySelector(".wrapper");
+    this._imgEl = this.shadowRoot.querySelector("img.base");
+
+    if (!this._wrapperEl || !this._imgEl) return;
+    this._imgEl.onerror = this._handleImageError;
+
+    for (const overlay of SENSOR_OVERLAYS) {
+      const node = document.createElement("div");
+      node.className = "overlay sensor";
+      node.style.left = `${overlay.relPos[0] * 100}%`;
+      node.style.top = `${overlay.relPos[1] * 100}%`;
+      this._wrapperEl.appendChild(node);
+      this._sensorNodes.set(overlay.key, node);
     }
+
+    for (const overlay of BINARY_OVERLAYS) {
+      const node = document.createElement("div");
+      node.className = "overlay binary off";
+      node.style.left = `${overlay.relPos[0] * 100}%`;
+      node.style.top = `${overlay.relPos[1] * 100}%`;
+      node.textContent = overlay.text;
+      this._wrapperEl.appendChild(node);
+      this._binaryNodes.set(overlay.key, node);
+    }
+
+    this._domReady = true;
+  }
+
+  _updateCardDom() {
+    if (!this._domReady) return;
+
+    const title = this._config.title || "Anlagenschema";
+    if (this._cardEl) {
+      this._cardEl.header = title;
+      this._cardEl.setAttribute("header", title);
+    }
+
+    const imageUrl = this._resolveImageUrl();
+    if (this._imgEl && this._imgEl.dataset.src !== imageUrl) {
+      this._imgEl.dataset.src = imageUrl;
+      this._imgEl.src = imageUrl;
+    }
+
+    for (const overlay of SENSOR_OVERLAYS) {
+      const node = this._sensorNodes.get(overlay.key);
+      if (!node) continue;
+      node.textContent = this._formatSensorOverlayText(overlay);
+    }
+
+    for (const overlay of BINARY_OVERLAYS) {
+      const node = this._binaryNodes.get(overlay.key);
+      if (!node) continue;
+      const isOn = this._isBinaryOn(overlay);
+      node.classList.toggle("on", isOn);
+      node.classList.toggle("off", !isOn);
+      node.textContent = overlay.text;
+    }
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+    this._ensureCardDom();
+    this._updateCardDom();
   }
 }
 

@@ -9,6 +9,20 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.50.1] - 2026-03-06
+
+### Fixed
+- Fixed JSON import in editor to read current textarea content even without prior `change`/blur.
+- Fixed touch interaction behavior by avoiding `preventDefault()` on touch `pointerdown` (reduces scroll blocking).
+- Fixed noisy/ambiguous config normalization by removing redundant `overlay_actions` default assignment.
+- Fixed obsolete click-path usage by relying on pointer tap flow consistently.
+
+### Changed
+- Improved state-change detection to include timestamp diffs only when status badges are enabled.
+- Improved toggle-action diagnostics by logging a warning when both toggle service fallbacks fail.
+- Refactored editor change routing to a `switch` for clearer single-dispatch control flow.
+- Extended test coverage for pointer tap handling, timestamp-only update filtering, touch pointer behavior, and JSON import without blur.
+
 ## [0.50.0] - 2026-03-06
 
 ### Added

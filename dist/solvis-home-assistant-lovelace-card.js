@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.50.0";
+const CARD_VERSION = "0.50.1";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -354,7 +354,6 @@ function normalizeConfig(config) {
     long_press_ms: DEFAULT_LONG_PRESS_MS,
     sensor_labels: {},
     binary_labels: {},
-    overlay_actions: {},
     ...rest,
     entities: { ...(entities || {}) },
     binary_entities: { ...(binaryEntities || {}) },
@@ -565,14 +564,16 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   async _toggleEntity(entityId) {
     if (!entityId || typeof this._hass?.callService !== "function") return;
     const [domain] = entityId.split(".");
-    const serviceDomain = domain || "homeassistant";
     try {
-      await this._hass.callService(serviceDomain, "toggle", { entity_id: entityId });
-    } catch {
+      await this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
+    } catch (err1) {
       try {
-        await this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
-      } catch {
-        // Ignore service failures and keep UX responsive.
+        await this._hass.callService(domain || "homeassistant", "toggle", { entity_id: entityId });
+      } catch (err2) {
+        console.warn(
+          `${CARD_NAME}: toggle action failed for ${entityId}`,
+          err2 || err1,
+        );
       }
     }
   }
@@ -702,14 +703,18 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   _hasRelevantStateChanges(previousHass, nextHass) {
+    const trackTimestamps = Boolean(this._config?.show_status_badges);
     for (const entityId of this._trackedEntityIds()) {
       const beforeObj = previousHass?.states?.[entityId];
       const afterObj = nextHass?.states?.[entityId];
       const before = beforeObj?.state ?? null;
       const after = afterObj?.state ?? null;
-      const beforeUpdated = beforeObj?.last_updated ?? beforeObj?.last_changed ?? null;
-      const afterUpdated = afterObj?.last_updated ?? afterObj?.last_changed ?? null;
-      if (before !== after || beforeUpdated !== afterUpdated) return true;
+      if (before !== after) return true;
+      if (trackTimestamps) {
+        const beforeUpdated = beforeObj?.last_updated ?? beforeObj?.last_changed ?? null;
+        const afterUpdated = afterObj?.last_updated ?? afterObj?.last_changed ?? null;
+        if (beforeUpdated !== afterUpdated) return true;
+      }
     }
     return false;
   }
@@ -1039,7 +1044,9 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       pointerId: ev?.pointerId,
     };
     this._activePress = press;
-    ev.preventDefault?.();
+    if (ev?.pointerType !== "touch") {
+      ev.preventDefault?.();
+    }
 
     if (typeof setTimeout === "function") {
       press.timer = setTimeout(() => {
@@ -1063,16 +1070,6 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
 
   _onCanvasPointerCancel() {
     this._clearActivePress();
-  }
-
-  _onCanvasClick(ev) {
-    const point = this._pointerToCanvasCoords(ev);
-    if (!point) return;
-    const target = this._findClickTargetAt(point.x, point.y);
-    if (!target) return;
-    ev.preventDefault?.();
-    ev.stopPropagation?.();
-    this._executeOverlayAction(target, "tap");
   }
 
   _onCanvasPointerMove(ev) {
@@ -1592,15 +1589,37 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       return;
     }
     if (typeof target.id !== "string") return;
-    if (target.id === "system") this._onSystemChanged(ev);
-    if (target.id === "text_size") this._onTextSizeChanged(ev);
-    if (target.id === "title") this._onTitleChanged(ev);
-    if (target.id === "image") this._onImageChanged(ev);
-    if (target.id === "compact_mode") this._onCompactModeChanged(ev);
-    if (target.id === "show_status_badges") this._onShowStatusBadgesChanged(ev);
-    if (target.id === "stale_threshold_minutes") this._onStaleThresholdChanged(ev);
-    if (target.id === "long_press_ms") this._onLongPressChanged(ev);
-    if (target.id === "config_json") this._configJsonBuffer = String(target?.value || "");
+    switch (target.id) {
+      case "system":
+        this._onSystemChanged(ev);
+        break;
+      case "text_size":
+        this._onTextSizeChanged(ev);
+        break;
+      case "title":
+        this._onTitleChanged(ev);
+        break;
+      case "image":
+        this._onImageChanged(ev);
+        break;
+      case "compact_mode":
+        this._onCompactModeChanged(ev);
+        break;
+      case "show_status_badges":
+        this._onShowStatusBadgesChanged(ev);
+        break;
+      case "stale_threshold_minutes":
+        this._onStaleThresholdChanged(ev);
+        break;
+      case "long_press_ms":
+        this._onLongPressChanged(ev);
+        break;
+      case "config_json":
+        this._configJsonBuffer = String(target?.value || "");
+        break;
+      default:
+        break;
+    }
   }
 
   _onEditorClick(ev) {
@@ -1624,7 +1643,10 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
       try {
         this._lastError = "";
         this._lastInfo = "";
-        this._importConfigFromJson(this._configJsonBuffer);
+        const textarea = this.shadowRoot?.querySelector?.("#config_json");
+        const jsonText = String(textarea?.value || this._configJsonBuffer || "");
+        this._configJsonBuffer = jsonText;
+        this._importConfigFromJson(jsonText);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this._lastError = `${this._t("import_failed")}: ${message}`;

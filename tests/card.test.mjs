@@ -857,12 +857,20 @@ test("drawLabeledBox respects left/right/center alignment for fixed width", () =
   assert.equal(calls[2].x, 80); // centered
 });
 
-test("canvas click emits hass-more-info for matching target", () => {
+test("pointer tap emits hass-more-info for matching target", () => {
   const runtime = loadCardRuntime();
   const { SolvisHomeAssistantLovelaceCard } = runtime;
 
   const card = new SolvisHomeAssistantLovelaceCard();
-  card._clickTargets = [{ entityId: "sensor.solvis_temp", x: 10, y: 10, w: 80, h: 20 }];
+  card._clickTargets = [{
+    key: "s10",
+    entityId: "sensor.solvis_temp",
+    isBinary: false,
+    x: 10,
+    y: 10,
+    w: 80,
+    h: 20,
+  }];
 
   let emittedEvent;
   card.dispatchEvent = (event) => {
@@ -871,20 +879,20 @@ test("canvas click emits hass-more-info for matching target", () => {
   };
 
   let prevented = false;
-  let stopped = false;
-  card._onCanvasClick({
+  card._onCanvasPointerDown({
+    pointerType: "mouse",
     offsetX: 20,
     offsetY: 15,
     preventDefault() {
       prevented = true;
     },
-    stopPropagation() {
-      stopped = true;
-    },
+  });
+  card._onCanvasPointerUp({
+    offsetX: 20,
+    offsetY: 15,
   });
 
   assert.equal(prevented, true);
-  assert.equal(stopped, true);
   assert.equal(emittedEvent?.type, "hass-more-info");
   assert.equal(emittedEvent?.detail?.entityId, "sensor.solvis_temp");
 });
@@ -1008,6 +1016,78 @@ test("status summary distinguishes stale and offline entities", () => {
   const summary = card._computeStatusSummary();
   assert.equal(summary.stale, 1);
   assert.equal(summary.offline, 1);
+});
+
+test("state change check ignores timestamps when status badges are disabled", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    show_status_badges: false,
+    entities: { s10: "sensor.temp" },
+  });
+
+  const before = {
+    states: {
+      "sensor.temp": { state: "21.0", last_updated: "2026-03-06T10:00:00Z" },
+    },
+  };
+  const afterSameStateNewTs = {
+    states: {
+      "sensor.temp": { state: "21.0", last_updated: "2026-03-06T10:10:00Z" },
+    },
+  };
+
+  assert.equal(card._hasRelevantStateChanges(before, afterSameStateNewTs), false);
+});
+
+test("import uses current textarea value even without prior change event", () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, normalizeConfig, SolvisHomeAssistantLovelaceCardEditor } = runtime;
+
+  const editor = new SolvisHomeAssistantLovelaceCardEditor();
+  editor._config = normalizeConfig({ type: `custom:${CARD_TYPE}` });
+  editor._configJsonBuffer = "";
+  editor.shadowRoot = {
+    querySelector(selector) {
+      if (selector === "#config_json") {
+        return { value: JSON.stringify({ type: `custom:${CARD_TYPE}`, title: "Imported now" }) };
+      }
+      return null;
+    },
+  };
+
+  let emitted;
+  editor._emitConfig = (config) => {
+    emitted = config;
+  };
+  editor._render = () => {};
+
+  editor._onEditorClick({ target: { id: "import_config" } });
+  assert.equal(emitted.title, "Imported now");
+});
+
+test("pointerdown on touch does not call preventDefault", () => {
+  const runtime = loadCardRuntime();
+  const { SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card._clickTargets = [{ key: "s10", entityId: "sensor.temp", isBinary: false, x: 0, y: 0, w: 20, h: 20 }];
+
+  let prevented = false;
+  card._onCanvasPointerDown({
+    pointerType: "touch",
+    offsetX: 10,
+    offsetY: 10,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+
+  assert.equal(prevented, false);
+  card._clearActivePress();
 });
 
 test("long press triggers hold action instead of tap action", async () => {

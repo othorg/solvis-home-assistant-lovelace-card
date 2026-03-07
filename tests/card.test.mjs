@@ -995,6 +995,42 @@ test("overlay action can navigate to configured path", () => {
   assert.equal(emittedEvent?.detail?.navigation_path, "/lovelace/test");
 });
 
+test("binary toggle action falls back to more-info for binary_sensor entities", async () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    overlay_actions: {
+      a1: { tap_action: "toggle", hold_action: "none", navigation_path: "" },
+    },
+  });
+
+  let serviceCalls = 0;
+  card._hass = {
+    callService: async () => {
+      serviceCalls += 1;
+    },
+  };
+
+  let emittedEvent;
+  card.dispatchEvent = (event) => {
+    emittedEvent = event;
+    return true;
+  };
+
+  card._executeOverlayAction(
+    { key: "a1", entityId: "binary_sensor.solvis_solarpump", isBinary: true },
+    "tap",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(serviceCalls, 0);
+  assert.equal(emittedEvent?.type, "hass-more-info");
+  assert.equal(emittedEvent?.detail?.entityId, "binary_sensor.solvis_solarpump");
+});
+
 test("status summary distinguishes stale and offline entities", () => {
   const runtime = loadCardRuntime();
   const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
@@ -1016,6 +1052,45 @@ test("status summary distinguishes stale and offline entities", () => {
   const summary = card._computeStatusSummary();
   assert.equal(summary.stale, 1);
   assert.equal(summary.offline, 1);
+});
+
+test("stale badge details include stale sensor and binary sensor entities", async () => {
+  const runtime = loadCardRuntime();
+  const { CARD_TYPE, SolvisHomeAssistantLovelaceCard } = runtime;
+
+  const card = new SolvisHomeAssistantLovelaceCard();
+  const staleTs = new Date(Date.now() - (61 * 60 * 1000)).toISOString();
+  card.setConfig({
+    type: `custom:${CARD_TYPE}`,
+    stale_threshold_minutes: 60,
+    entities: { s10: "sensor.solvis_temp_old" },
+    binary_entities: { a1: "binary_sensor.solvis_pump_old" },
+  });
+
+  let call;
+  card._hass = {
+    states: {
+      "sensor.solvis_temp_old": {
+        state: "12.3",
+        last_updated: staleTs,
+        attributes: { friendly_name: "Temperatur Alt" },
+      },
+      "binary_sensor.solvis_pump_old": {
+        state: "off",
+        last_updated: staleTs,
+        attributes: { friendly_name: "Pumpe Alt" },
+      },
+    },
+    callService: async (domain, service, data) => {
+      call = { domain, service, data };
+    },
+  };
+
+  await card._showStatusEntities("stale");
+  assert.equal(call?.domain, "persistent_notification");
+  assert.equal(call?.service, "create");
+  assert.match(call?.data?.message || "", /sensor\.solvis_temp_old/);
+  assert.match(call?.data?.message || "", /binary_sensor\.solvis_pump_old/);
 });
 
 test("state change check ignores timestamps when status badges are disabled", () => {

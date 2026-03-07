@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.50.1";
+const CARD_VERSION = "0.50.2";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -136,6 +136,9 @@ const I18N = {
     export_ready: "Konfiguration exportiert",
     stale_badge: "Veraltet",
     offline_badge: "Offline",
+    stale_entities_title: "Veraltete Entitäten",
+    offline_entities_title: "Offline Entitäten",
+    status_entities_intro: "Folgende Entitäten sind betroffen:",
   },
   en: {
     default_title: "System diagram",
@@ -186,6 +189,9 @@ const I18N = {
     export_ready: "Configuration exported",
     stale_badge: "Stale",
     offline_badge: "Offline",
+    stale_entities_title: "Stale entities",
+    offline_entities_title: "Offline entities",
+    status_entities_intro: "Affected entities:",
   },
 };
 
@@ -457,6 +463,10 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._boundOnCanvasPointerDown = this._onCanvasPointerDown.bind(this);
     this._boundOnCanvasPointerUp = this._onCanvasPointerUp.bind(this);
     this._boundOnCanvasPointerCancel = this._onCanvasPointerCancel.bind(this);
+    this._boundOnOfflineBadgeClick = (ev) => this._onStatusBadgeClick("offline", ev);
+    this._boundOnStaleBadgeClick = (ev) => this._onStatusBadgeClick("stale", ev);
+    this._boundOnOfflineBadgeKeyDown = (ev) => this._onStatusBadgeKeyDown("offline", ev);
+    this._boundOnStaleBadgeKeyDown = (ev) => this._onStatusBadgeKeyDown("stale", ev);
   }
 
   static getStubConfig() {
@@ -562,18 +572,22 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
   }
 
   async _toggleEntity(entityId) {
-    if (!entityId || typeof this._hass?.callService !== "function") return;
+    if (!entityId || typeof this._hass?.callService !== "function") return false;
     const [domain] = entityId.split(".");
+    if (domain === "binary_sensor") return false;
     try {
       await this._hass.callService("homeassistant", "toggle", { entity_id: entityId });
+      return true;
     } catch (err1) {
       try {
         await this._hass.callService(domain || "homeassistant", "toggle", { entity_id: entityId });
+        return true;
       } catch (err2) {
         console.warn(
           `${CARD_NAME}: toggle action failed for ${entityId}`,
           err2 || err1,
         );
+        return false;
       }
     }
   }
@@ -598,28 +612,94 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       return;
     }
     if (actionType === "toggle") {
-      this._toggleEntity(target.entityId);
+      this._toggleEntity(target.entityId).then((ok) => {
+        // If toggle is unsupported/failed (for example binary_sensor), fall back to more-info.
+        if (!ok) this._emitMoreInfo(target.entityId);
+      });
     }
   }
 
-  _computeStatusSummary() {
+  _formatEntityDisplayName(entityId, stateObj) {
+    const friendlyName = String(stateObj?.attributes?.friendly_name || "").trim();
+    return friendlyName || entityId;
+  }
+
+  _collectEntityHealth() {
     const thresholdMs = this._getStaleThresholdMs();
     const now = Date.now();
-    let offline = 0;
-    let stale = 0;
+    const offline = [];
+    const stale = [];
 
     for (const entityId of this._trackedEntityIds()) {
       const stateObj = this._hass?.states?.[entityId];
       if (!stateObj || isStateUnavailable(stateObj)) {
-        offline += 1;
+        offline.push({
+          entityId,
+          name: this._formatEntityDisplayName(entityId, stateObj),
+        });
         continue;
       }
       const ts = Date.parse(stateObj.last_updated || stateObj.last_changed || "");
       if (Number.isFinite(ts) && (now - ts) > thresholdMs) {
-        stale += 1;
+        stale.push({
+          entityId,
+          name: this._formatEntityDisplayName(entityId, stateObj),
+        });
       }
     }
+
     return { offline, stale };
+  }
+
+  _computeStatusSummary() {
+    const health = this._collectEntityHealth();
+    return {
+      offline: health.offline.length,
+      stale: health.stale.length,
+    };
+  }
+
+  _buildStatusBadgeTooltip(entities) {
+    if (!Array.isArray(entities) || entities.length === 0) return "";
+    const preview = entities.slice(0, 4).map((item) => item.name).join(", ");
+    if (entities.length <= 4) return preview;
+    return `${preview} (+${entities.length - 4})`;
+  }
+
+  async _showStatusEntities(kind) {
+    const health = this._collectEntityHealth();
+    const items = kind === "stale" ? health.stale : health.offline;
+    if (!items.length || typeof this._hass?.callService !== "function") return;
+
+    const title = kind === "stale"
+      ? `${this._t("stale_entities_title")} (${items.length})`
+      : `${this._t("offline_entities_title")} (${items.length})`;
+    const lines = items.map((item) => `- ${item.name} (\`${item.entityId}\`)`);
+    const message = `${this._t("status_entities_intro")}\n${lines.join("\n")}`;
+
+    try {
+      await this._hass.callService("persistent_notification", "create", {
+        title,
+        message,
+        notification_id: `${CARD_TYPE}_${kind}_entities`,
+      });
+    } catch (err) {
+      console.warn(`${CARD_NAME}: failed to open status entity list for ${kind}`, err);
+    }
+  }
+
+  _onStatusBadgeClick(kind, ev) {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    this._showStatusEntities(kind);
+  }
+
+  _onStatusBadgeKeyDown(kind, ev) {
+    const key = String(ev?.key || "");
+    if (key !== "Enter" && key !== " ") return;
+    ev.preventDefault?.();
+    ev.stopPropagation?.();
+    this._showStatusEntities(kind);
   }
 
   _resolveImageUrl() {
@@ -728,6 +808,14 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       this._canvasEl.removeEventListener("pointerup", this._boundOnCanvasPointerUp);
       this._canvasEl.removeEventListener("pointercancel", this._boundOnCanvasPointerCancel);
     }
+    if (this._offlineBadgeEl) {
+      this._offlineBadgeEl.removeEventListener("click", this._boundOnOfflineBadgeClick);
+      this._offlineBadgeEl.removeEventListener("keydown", this._boundOnOfflineBadgeKeyDown);
+    }
+    if (this._staleBadgeEl) {
+      this._staleBadgeEl.removeEventListener("click", this._boundOnStaleBadgeClick);
+      this._staleBadgeEl.removeEventListener("keydown", this._boundOnStaleBadgeKeyDown);
+    }
     if (this._resizeObserver && this._wrapperEl) {
       this._resizeObserver.unobserve(this._wrapperEl);
     }
@@ -801,6 +889,15 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
           white-space: nowrap;
         }
 
+        .status-badge[role="button"] {
+          cursor: pointer;
+        }
+
+        .status-badge:focus-visible {
+          outline: 2px solid rgba(30, 120, 220, 0.9);
+          outline-offset: 2px;
+        }
+
         .status-badge.offline {
           color: #7a1f1f;
           background: rgba(255, 190, 190, 0.8);
@@ -842,6 +939,14 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
     this._canvasEl.addEventListener("pointerdown", this._boundOnCanvasPointerDown);
     this._canvasEl.addEventListener("pointerup", this._boundOnCanvasPointerUp);
     this._canvasEl.addEventListener("pointercancel", this._boundOnCanvasPointerCancel);
+    if (this._offlineBadgeEl) {
+      this._offlineBadgeEl.addEventListener("click", this._boundOnOfflineBadgeClick);
+      this._offlineBadgeEl.addEventListener("keydown", this._boundOnOfflineBadgeKeyDown);
+    }
+    if (this._staleBadgeEl) {
+      this._staleBadgeEl.addEventListener("click", this._boundOnStaleBadgeClick);
+      this._staleBadgeEl.addEventListener("keydown", this._boundOnStaleBadgeKeyDown);
+    }
     this._updateOverlayScale();
     this._scheduleCanvasRender();
     if (typeof ResizeObserver !== "undefined") {
@@ -1269,18 +1374,32 @@ class SolvisHomeAssistantLovelaceCard extends HTMLElement {
       return;
     }
 
-    const summary = this._computeStatusSummary();
-    const showOffline = summary.offline > 0;
-    const showStale = summary.stale > 0;
+    const health = this._collectEntityHealth();
+    const showOffline = health.offline.length > 0;
+    const showStale = health.stale.length > 0;
 
     this._offlineBadgeEl.hidden = !showOffline;
     this._staleBadgeEl.hidden = !showStale;
 
     if (showOffline) {
-      this._offlineBadgeEl.textContent = `${this._t("offline_badge")}: ${summary.offline}`;
+      this._offlineBadgeEl.textContent = `${this._t("offline_badge")}: ${health.offline.length}`;
+      this._offlineBadgeEl.title = this._buildStatusBadgeTooltip(health.offline);
+      this._offlineBadgeEl.setAttribute("role", "button");
+      this._offlineBadgeEl.setAttribute("tabindex", "0");
+    } else {
+      this._offlineBadgeEl.removeAttribute("title");
+      this._offlineBadgeEl.removeAttribute("role");
+      this._offlineBadgeEl.removeAttribute("tabindex");
     }
     if (showStale) {
-      this._staleBadgeEl.textContent = `${this._t("stale_badge")}: ${summary.stale}`;
+      this._staleBadgeEl.textContent = `${this._t("stale_badge")}: ${health.stale.length}`;
+      this._staleBadgeEl.title = this._buildStatusBadgeTooltip(health.stale);
+      this._staleBadgeEl.setAttribute("role", "button");
+      this._staleBadgeEl.setAttribute("tabindex", "0");
+    } else {
+      this._staleBadgeEl.removeAttribute("title");
+      this._staleBadgeEl.removeAttribute("role");
+      this._staleBadgeEl.removeAttribute("tabindex");
     }
     this._statusLayerEl.hidden = !(showOffline || showStale);
   }

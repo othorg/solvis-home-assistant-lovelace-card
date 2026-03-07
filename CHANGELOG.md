@@ -9,6 +9,19 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.50.2] - 2026-03-07
+
+### Added
+- Added clickable status badges (`Stale`/`Offline`) with keyboard support (`Enter`/`Space`) and accessible focus styling.
+- Added status detail output via `persistent_notification` listing affected entities with friendly names and entity IDs.
+
+### Fixed
+- Fixed binary overlay interaction in `toggle` mode by falling back to `more-info` when entity toggle is unsupported (notably `binary_sensor.*`).
+
+### Changed
+- Refactored status computation to central entity-health collection (`stale` + `offline`) reused by summary and badge details.
+- Extended tests for binary-toggle fallback and stale badge entity listing (including binary sensors).
+
 ## [0.50.1] - 2026-03-06
 
 ### Fixed

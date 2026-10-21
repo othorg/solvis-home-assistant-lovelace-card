@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.51.0";
+const CARD_VERSION = "0.52.0";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -2143,8 +2143,8 @@ const REMOTE_I18N = {
     no_entity: "Select the Solvis display camera (camera.*_display) in the card settings.",
     unavailable: "Display not reachable",
     failed: "Command failed",
-    left: "Left button",
-    right: "Right button",
+    left: "Back (left button)",
+    right: "Help (right button)",
     entity: "Display camera",
     title: "Title (optional)",
   },
@@ -2152,8 +2152,8 @@ const REMOTE_I18N = {
     no_entity: "In den Karteneinstellungen die Solvis-Display-Kamera (camera.*_display) waehlen.",
     unavailable: "Display nicht erreichbar",
     failed: "Befehl fehlgeschlagen",
-    left: "Linke Taste",
-    right: "Rechte Taste",
+    left: "Zurueck (linke Taste)",
+    right: "Hilfe (rechte Taste)",
     entity: "Display-Kamera",
     title: "Titel (optional)",
   },
@@ -2398,10 +2398,12 @@ class SolvisRemoteCard extends HTMLElement {
     }
     this.shadowRoot.innerHTML = `<ha-card${title ? ` header="${title.replace(/"/g, "&quot;")}"` : ""}>
       <div class="remote">
-        <div class="display" role="img"><img class="frame" alt="" draggable="false"></div>
-        <div class="buttons">
-          <button class="hw" data-button="links" title="${remoteT(hass, "left")}" aria-label="${remoteT(hass, "left")}"></button>
-          <button class="hw" data-button="rechts" title="${remoteT(hass, "right")}" aria-label="${remoteT(hass, "right")}"></button>
+        <div class="housing">
+          <div class="display" role="img"><img class="frame" alt="" draggable="false"></div>
+          <div class="buttons">
+            <button class="hw" data-button="links" title="${remoteT(hass, "left")}" aria-label="${remoteT(hass, "left")}">${REMOTE_ICON_BACK}</button>
+            <button class="hw" data-button="rechts" title="${remoteT(hass, "right")}" aria-label="${remoteT(hass, "right")}"><span>?</span></button>
+          </div>
         </div>
         <div class="status" aria-live="polite"></div>
       </div></ha-card>${REMOTE_STYLE}`;
@@ -2422,22 +2424,45 @@ class SolvisRemoteCard extends HTMLElement {
   }
 }
 
+// The two buttons of the SolvisControl front: back (left) and help (right).
+const REMOTE_ICON_BACK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.5 6v12L3 12zm9.5 0v12l-8.5-6z"/></svg>`;
+
+// Drawn after the SolvisControl front panel: light housing, inset LCD, round buttons.
 const REMOTE_STYLE = `<style>
   ha-card { overflow: hidden; }
-  .remote { padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .remote { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .housing {
+    width: 100%; max-width: 560px; box-sizing: border-box;
+    padding: 7% 8% 3%;
+    background: linear-gradient(180deg, #fdfdfd 0%, #e9e9e9 100%);
+    border: 1px solid #d4d4d4;
+    border-radius: 18px 18px 50% 50% / 18px 18px 14% 14%;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18), inset 0 1px 0 #fff;
+  }
   .display {
-    width: 100%; max-width: 720px; aspect-ratio: 240 / 128;
-    background: #1e1e1e; border: 6px solid #2b2b2b; border-radius: 6px;
+    width: 100%; aspect-ratio: 240 / 128; box-sizing: border-box; overflow: hidden;
+    background: #edf8f9; border: 3px solid #c9c9c9; border-radius: 3px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
     cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
   }
-  .display img { width: 100%; height: 100%; display: block; image-rendering: pixelated; pointer-events: none; }
-  .buttons { width: 100%; max-width: 720px; display: flex; justify-content: space-between; }
-  .hw {
-    width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--divider-color, #888);
-    background: var(--secondary-background-color, #eee); cursor: pointer;
+  .display img {
+    width: 100%; height: 100%; display: block; pointer-events: none;
+    image-rendering: pixelated; mix-blend-mode: multiply;
   }
-  .hw:active { filter: brightness(0.85); }
-  .status { min-height: 1.2em; font-size: 0.9em; color: var(--error-color, #c62828); }
+  .buttons { display: flex; justify-content: space-between; padding: 5% 2% 3%; }
+  .hw {
+    width: 13%; min-width: 36px; max-width: 58px; aspect-ratio: 1; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; border: 1px solid #c4c4c4; color: #555; cursor: pointer;
+    background: radial-gradient(circle at 50% 35%, #ffffff 0%, #ececec 70%, #dedede 100%);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    font: 600 clamp(14px, 3.2vw, 20px) / 1 system-ui, sans-serif;
+  }
+  .hw svg { width: 42%; height: 42%; fill: currentColor; }
+  .hw:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3); background: #e4e4e4; }
+  .hw:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
+  .status { font-size: 0.9em; color: var(--error-color, #c62828); }
+  .status:empty { display: none; }
   .hint { padding: 16px; color: var(--secondary-text-color); }
 </style>`;
 

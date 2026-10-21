@@ -9,6 +9,11 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.52.0] - 2026-10-21
+
+### Changed
+- `solvis-remote-card` is drawn like the SolvisControl front panel: light housing, inset LCD in its tint, round back (◀◀) and help (?) buttons, compact width instead of a full-width display with bare circles.
+
 ## [0.51.0] - 2026-10-21
 
 ### Added

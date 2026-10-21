@@ -214,7 +214,7 @@ class FakeCustomEvent {
 }
 
 function loadCardRuntime(options = {}) {
-  const { scriptSrc = "" } = options;
+  const { scriptSrc = "", globals = {} } = options;
   const registry = new Map();
   const customElements = {
     define(name, klass) {
@@ -261,6 +261,7 @@ function loadCardRuntime(options = {}) {
     Date,
     setTimeout,
     clearTimeout,
+    ...globals,
   };
 
   context.globalThis = context;
@@ -1279,4 +1280,134 @@ test("remote card does not poll without an entity", () => {
   assert.equal(card._shouldPoll(), true);
   card._intersecting = false;
   assert.equal(card._shouldPoll(), false, "hidden cards must not poll the controller");
+});
+
+test("remote card abandons a frame that never loads", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const images = [];
+  class HangingImage {
+    constructor() {
+      images.push(this);
+    }
+  }
+  const { SolvisRemoteCard, REMOTE_CARD_TYPE } = loadCardRuntime({ globals: { Image: HangingImage } });
+  const card = new SolvisRemoteCard();
+  card.setConfig({ type: `custom:${REMOTE_CARD_TYPE}`, entity: "camera.solvis_system_display" });
+  card._hass = {
+    language: "en",
+    states: { "camera.solvis_system_display": { state: "idle", attributes: { entity_picture: "/api/camera_proxy/x?token=a" } } },
+  };
+  card._frameEl = {};
+  card._statusEl = { textContent: "" };
+  card._loadFrame();
+  assert.equal(images.length, 1);
+  t.mock.timers.tick(5000);
+  assert.equal(card._request, null, "a hanging load must not stop polling");
+  assert.equal(card._statusEl.textContent, "Display not reachable");
+  t.mock.timers.tick(2000);
+  assert.equal(images.length, 2, "next frame is requested after the error delay");
+  card.disconnectedCallback();
+});
+
+test("remote card keeps a command error visible over frame updates", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  const { SolvisRemoteCard, REMOTE_CARD_TYPE } = loadCardRuntime();
+  const card = new SolvisRemoteCard();
+  card.setConfig({ type: `custom:${REMOTE_CARD_TYPE}`, entity: "camera.solvis_system_display" });
+  card._hass = { language: "en", callService: () => Promise.reject(new Error("busy")) };
+  card._statusEl = { textContent: "" };
+  await card._call("press_button", { button: "links" }).catch(() => {});
+  assert.equal(card._statusEl.textContent, "Command failed: busy");
+  card._setStatus("");
+  assert.equal(card._statusEl.textContent, "Command failed: busy");
+  t.mock.timers.tick(5001);
+  card._setStatus("");
+  assert.equal(card._statusEl.textContent, "");
+});
+
+function remoteCardWithImages(t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const images = [];
+  class FakeImage {
+    constructor() {
+      this.src = "";
+      images.push(this);
+    }
+  }
+  const runtime = loadCardRuntime({ globals: { Image: FakeImage } });
+  const card = new runtime.SolvisRemoteCard();
+  const calls = [];
+  card._hass = {
+    language: "en",
+    states: {
+      "camera.a": { state: "idle", attributes: { entity_picture: "/api/camera_proxy/camera.a?token=1" } },
+      "camera.b": { state: "idle", attributes: { entity_picture: "/api/camera_proxy/camera.b?token=1" } },
+    },
+    callService: (domain, service, data) => {
+      calls.push({ service, data });
+      return Promise.resolve();
+    },
+  };
+  return { runtime, card, images, calls };
+}
+
+test("remote card ignores the release of a second finger", (t) => {
+  const { runtime, card, calls } = remoteCardWithImages(t);
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}`, entity: "camera.a" });
+  card._displayEl = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 480, height: 256 }) };
+  card._onPointerDown({ clientX: 10, clientY: 10, pointerId: 1, preventDefault() {} });
+  card._onPointerDown({ clientX: 50, clientY: 50, pointerId: 2, preventDefault() {} });
+  card._onPointerUp({ pointerId: 2 });
+  assert.deepEqual(calls.map((c) => c.service), ["touch_down"]);
+  card._onPointerUp({ pointerId: 1 });
+  assert.deepEqual(calls.map((c) => c.service), ["touch_down", "touch_up"]);
+  card.disconnectedCallback();
+});
+
+test("remote card releases on the camera that was pressed when the entity changes", (t) => {
+  const { runtime, card, calls } = remoteCardWithImages(t);
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}`, entity: "camera.a" });
+  card._displayEl = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 480, height: 256 }) };
+  card._onPointerDown({ clientX: 10, clientY: 10, pointerId: 1, preventDefault() {} });
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}`, entity: "camera.b" });
+  assert.deepEqual(
+    calls.map((c) => [c.service, c.data.entity_id]),
+    [["touch_down", "camera.a"], ["touch_up", "camera.a"]],
+  );
+  assert.equal(calls[1].data.gesture_id, calls[0].data.gesture_id);
+  card.disconnectedCallback();
+});
+
+test("remote card starts polling when a camera is selected later", (t) => {
+  const { runtime, card, images } = remoteCardWithImages(t);
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}` });
+  card._frameEl = {};
+  t.mock.timers.tick(10);
+  assert.equal(images.length, 0);
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}`, entity: "camera.a" });
+  card._frameEl = {};
+  t.mock.timers.tick(1);
+  assert.equal(images.length, 1);
+  assert.match(images[0].src, /camera\.a/);
+  card.disconnectedCallback();
+});
+
+test("remote card drops callbacks of a request superseded by reconnect", (t) => {
+  const { runtime, card, images } = remoteCardWithImages(t);
+  card.setConfig({ type: `custom:${runtime.REMOTE_CARD_TYPE}`, entity: "camera.a" });
+  card._frameEl = { src: "" };
+  t.mock.timers.tick(1);
+  const old = images[0];
+  const oldOnload = old.onload;
+  card.disconnectedCallback();
+  assert.equal(old.onload, null, "a cancelled request has no callbacks left");
+  card.connectedCallback();
+  t.mock.timers.tick(1);
+  const current = images[1];
+  oldOnload();  // a late callback captured before the cancel
+  assert.equal(card._frameEl.src, "", "the superseded frame must not be shown");
+  assert.equal(card._request?.img, current, "the current request keeps running");
+  current.onload();
+  assert.equal(card._frameEl.src, current.src);
+  card.disconnectedCallback();
 });

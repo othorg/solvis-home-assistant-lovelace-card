@@ -2133,6 +2133,10 @@ const REMOTE_DISPLAY = { width: 240, height: 128, touchScale: 2 };
 // Like remote.html: next frame 500 ms after the last one arrived, retry after 2 s.
 const REMOTE_FRAME_DELAY_MS = 500;
 const REMOTE_ERROR_DELAY_MS = 2000;
+// A frame that neither loads nor fails is abandoned after this.
+const REMOTE_LOAD_TIMEOUT_MS = 5000;
+// How long a failed command stays visible over the display status.
+const REMOTE_COMMAND_ERROR_MS = 5000;
 
 const REMOTE_I18N = {
   en: {
@@ -2212,14 +2216,17 @@ class SolvisRemoteCard extends HTMLElement {
     this._frameEl = null;
     this._statusEl = null;
     this._timer = null;
-    this._loading = false;
-    this._pressed = false;
-    this._gestureId = "";
+    // The frame request in flight: { img, timer }. Its callbacks only act
+    // while it is still this object, so a superseded request cannot interfere.
+    this._request = null;
+    this._commandErrorUntil = 0;
+    // The touch in progress: { pointerId, gestureId, entityId }.
+    this._gesture = null;
     this._intersecting = true;
     this._observer = null;
     this._boundVisibility = () => this._schedule(0);
     this._boundPointerDown = (ev) => this._onPointerDown(ev);
-    this._boundPointerUp = () => this._onPointerUp();
+    this._boundPointerUp = (ev) => this._onPointerUp(ev);
   }
 
   static getStubConfig(hass) {
@@ -2234,9 +2241,14 @@ class SolvisRemoteCard extends HTMLElement {
     if (!config || config.type !== `custom:${REMOTE_CARD_TYPE}`) {
       throw new Error(`Invalid configuration for ${REMOTE_CARD_TYPE}`);
     }
-    this._config = normalizeRemoteConfig(config);
+    const next = normalizeRemoteConfig(config);
+    // A touch in progress belongs to the camera it was pressed on.
+    if (next.entity !== this._config.entity) this._releaseGesture();
+    this._config = next;
+    this._cancelRequest();
     this._domReady = false;
     this._render();
+    this._schedule(0);
   }
 
   set hass(hass) {
@@ -2268,7 +2280,8 @@ class SolvisRemoteCard extends HTMLElement {
     this._observer = null;
     clearTimeout(this._timer);
     this._timer = null;
-    this._onPointerUp();
+    this._cancelRequest();
+    this._releaseGesture();
   }
 
   _shouldPoll() {
@@ -2290,7 +2303,7 @@ class SolvisRemoteCard extends HTMLElement {
 
   _loadFrame() {
     this._timer = null;
-    if (this._loading || !this._shouldPoll() || !this._frameEl) return;
+    if (this._request || !this._shouldPoll() || !this._frameEl) return;
     const url = remoteFrameUrl(this._hass.states?.[this._config.entity], Date.now());
     if (!url) {
       this._setStatus(remoteT(this._hass, "unavailable"));
@@ -2298,59 +2311,81 @@ class SolvisRemoteCard extends HTMLElement {
       return;
     }
     // Load off-screen and swap, so the shown frame never goes blank.
-    const preload = new Image();
-    this._loading = true;
-    preload.onload = () => {
-      this._loading = false;
-      if (this._frameEl) this._frameEl.src = preload.src;
-      this._setStatus("");
-      this._schedule(REMOTE_FRAME_DELAY_MS);
+    const request = { img: new Image(), timer: null };
+    this._request = request;
+    const finish = (ok) => {
+      if (this._request !== request) return;
+      this._cancelRequest();
+      if (ok && this._frameEl) this._frameEl.src = request.img.src;
+      this._setStatus(ok ? "" : remoteT(this._hass, "unavailable"));
+      this._schedule(ok ? REMOTE_FRAME_DELAY_MS : REMOTE_ERROR_DELAY_MS);
     };
-    preload.onerror = () => {
-      this._loading = false;
-      this._setStatus(remoteT(this._hass, "unavailable"));
-      this._schedule(REMOTE_ERROR_DELAY_MS);
-    };
-    preload.src = url;
+    request.img.onload = () => finish(true);
+    request.img.onerror = () => finish(false);
+    request.timer = setTimeout(() => finish(false), REMOTE_LOAD_TIMEOUT_MS);
+    request.img.src = url;
   }
 
+  _cancelRequest() {
+    const request = this._request;
+    if (!request) return;
+    this._request = null;
+    clearTimeout(request.timer);
+    request.img.onload = null;
+    request.img.onerror = null;
+  }
+
+  // Display status; a recent command error takes precedence.
   _setStatus(text) {
+    if (Date.now() < this._commandErrorUntil) return;
     if (this._statusEl) this._statusEl.textContent = text;
   }
 
-  _call(service, data) {
+  _call(service, data, entityId = this._config.entity) {
     return this._hass
-      .callService("solvis_remote", service, { entity_id: this._config.entity, ...data })
+      .callService("solvis_remote", service, { entity_id: entityId, ...data })
       .catch((err) => {
+        this._commandErrorUntil = 0;
         this._setStatus(`${remoteT(this._hass, "failed")}: ${err?.message || err}`);
+        this._commandErrorUntil = Date.now() + REMOTE_COMMAND_ERROR_MS;
         throw err;
       });
   }
 
   _onPointerDown(ev) {
-    if (this._pressed || !this._hass || !this._config.entity || !this._displayEl) return;
+    if (this._gesture || !this._hass || !this._config.entity || !this._displayEl) return;
     ev.preventDefault?.();
     const rect = this._displayEl.getBoundingClientRect();
     const point = remoteTouchPoint(ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height);
     if (!point) return;
-    this._pressed = true;
-    const gestureId = newGestureId();
-    this._gestureId = gestureId;
+    const gesture = { pointerId: ev.pointerId, gestureId: newGestureId(), entityId: this._config.entity };
+    this._gesture = gesture;
     this._displayEl.setPointerCapture?.(ev.pointerId);
-    this._call("touch_down", { ...point, gesture_id: gestureId }).catch(() => {
-      if (this._gestureId === gestureId) this._pressed = false;
+    this._call("touch_down", { ...point, gesture_id: gesture.gestureId }, gesture.entityId).catch(() => {
+      if (this._gesture === gesture) this._gesture = null;
     });
   }
 
-  _onPointerUp() {
-    if (!this._pressed) return;
-    this._pressed = false;
+  // Only the pointer that pressed may release (a second finger must not).
+  _onPointerUp(ev) {
+    const gesture = this._gesture;
+    if (!gesture) return;
+    if (ev?.pointerId !== undefined && ev.pointerId !== gesture.pointerId) return;
+    this._releaseGesture();
+  }
+
+  _releaseGesture() {
+    const gesture = this._gesture;
+    if (!gesture) return;
+    this._gesture = null;
     // The integration keeps the minimum hold of the native page.
-    this._call("touch_up", { gesture_id: this._gestureId }).catch(() => {});
+    this._call("touch_up", { gesture_id: gesture.gestureId }, gesture.entityId).catch(() => {});
   }
 
   _render() {
     if (!this.shadowRoot) return;
+    // Rebuilding drops the listeners of a press in progress: release it first.
+    this._releaseGesture();
     const hass = this._hass;
     const title = this._config.title;
     if (!this._config.entity) {
@@ -2406,6 +2441,19 @@ const REMOTE_STYLE = `<style>
   .hint { padding: 16px; color: var(--secondary-text-color); }
 </style>`;
 
+// ha-entity-picker / ha-textfield are lazy-loaded by the frontend; building
+// an entities card editor once makes sure they are defined.
+async function loadHaFormElements() {
+  if (customElements.get("ha-entity-picker") && customElements.get("ha-textfield")) return;
+  try {
+    const helpers = await window.loadCardHelpers?.();
+    const card = await helpers?.createCardElement({ type: "entities", entities: [] });
+    await card?.constructor?.getConfigElement?.();
+  } catch (_err) {
+    // Without the helpers the editor renders whatever is available.
+  }
+}
+
 class SolvisRemoteCardEditor extends HTMLElement {
   constructor() {
     super();
@@ -2413,6 +2461,7 @@ class SolvisRemoteCardEditor extends HTMLElement {
     this._config = { type: `custom:${REMOTE_CARD_TYPE}` };
     this._hass = undefined;
     this._picker = null;
+    loadHaFormElements().then(() => this._render());
   }
 
   setConfig(config) {
@@ -2516,6 +2565,7 @@ if (typeof process !== "undefined" && process?.env?.SOLVIS_CARD_TEST === "1") {
     remoteTouchPoint,
     remoteFrameUrl,
     newGestureId,
+    loadHaFormElements,
     findSolvisDisplayCamera,
     SolvisRemoteCard,
     SolvisRemoteCardEditor,

@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.52.0";
+const CARD_VERSION = "0.52.1";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -46,17 +46,17 @@ const DEFAULT_IMAGE_CANDIDATES = [
 
 const SENSOR_OVERLAYS = [
   { key: "s10", relPos: [0.495, 0.100], format: "{v}°C", label: "S10", name: "Aussentemperatur" },
-  { key: "s1", relPos: [0.558, 0.227], format: "{v}°C", label: "S1", name: "Speicher oben" },
-  { key: "s4", relPos: [0.558, 0.391], format: "{v}°C", label: "S4", name: "Speicher Nachheizung" },
-  { key: "s9", relPos: [0.558, 0.536], format: "{v}°C", label: "S9", name: "Speicher Mitte" },
-  { key: "s3", relPos: [0.558, 0.936], format: "{v}°C", label: "S3", name: "Speicher unten" },
+  { key: "s1", relPos: [0.558, 0.227], format: "{v}°C", label: "S1", name: "Warmwasserpuffer" },
+  { key: "s4", relPos: [0.558, 0.391], format: "{v}°C", label: "S4", name: "Heizungspuffer oben" },
+  { key: "s9", relPos: [0.558, 0.536], format: "{v}°C", label: "S9", name: "Heizungspuffer unten" },
+  { key: "s3", relPos: [0.558, 0.936], format: "{v}°C", label: "S3", name: "Speicherreferenz" },
   { key: "slv", relPos: [0.192, 0.689], format: "{v}kW", label: "SL", name: "Solarleistung" },
   { key: "sev", relPos: [0.192, 0.729], format: "{v}kWh", label: "SE", name: "Solarertrag" },
   { key: "s17", relPos: [0.192, 0.769], format: "{v}l/h", label: "S17", name: "Durchfluss Solar" },
   { key: "s8", relPos: [0.192, 0.809], format: "{v}°C", label: "S8", name: "Kollektortemperatur" },
-  { key: "s2", relPos: [0.655, 0.536], format: "{v}°C", label: "S2", name: "Warmwasser" },
-  { key: "s11", relPos: [0.655, 0.622], format: "{v}°C", label: "S11", name: "Zirkulation" },
-  { key: "s12", relPos: [0.655, 0.787], format: "{v}°C", label: "S12", name: "Heizkreis Vorlauf" },
+  { key: "s2", relPos: [0.655, 0.536], format: "{v}°C", label: "S2", name: "Warmwassertemperatur" },
+  { key: "s11", relPos: [0.655, 0.622], format: "{v}°C", label: "S11", name: "Zirkulationstemperatur" },
+  { key: "s12", relPos: [0.655, 0.787], format: "{v}°C", label: "S12", name: "Vorlauftemperatur Heizkreis" },
 ];
 
 const BINARY_OVERLAYS = [
@@ -198,31 +198,31 @@ const I18N = {
 const SENSOR_NAME_I18N = {
   de: {
     s10: "Aussentemperatur",
-    s1: "Speicher oben",
-    s4: "Speicher Nachheizung",
-    s9: "Speicher Mitte",
-    s3: "Speicher unten",
+    s1: "Warmwasserpuffer",
+    s4: "Heizungspuffer oben",
+    s9: "Heizungspuffer unten",
+    s3: "Speicherreferenz",
     slv: "Solarleistung",
     sev: "Solarertrag",
     s17: "Durchfluss Solar",
     s8: "Kollektortemperatur",
-    s2: "Warmwasser",
-    s11: "Zirkulation",
-    s12: "Heizkreis Vorlauf",
+    s2: "Warmwassertemperatur",
+    s11: "Zirkulationstemperatur",
+    s12: "Vorlauftemperatur Heizkreis",
   },
   en: {
     s10: "Outdoor temperature",
-    s1: "Storage top",
-    s4: "Storage reheating",
-    s9: "Storage middle",
-    s3: "Storage bottom",
+    s1: "Hot water buffer",
+    s4: "Heating buffer top",
+    s9: "Heating buffer bottom",
+    s3: "Storage reference",
     slv: "Solar power",
     sev: "Solar yield",
-    s17: "Solar flow",
+    s17: "Flow rate solar",
     s8: "Collector temperature",
-    s2: "Hot water",
-    s11: "Circulation",
-    s12: "Heating circuit flow",
+    s2: "Hot water temperature",
+    s11: "Circulation temperature",
+    s12: "Flow temperature heating",
   },
 };
 

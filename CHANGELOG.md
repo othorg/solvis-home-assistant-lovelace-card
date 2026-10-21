@@ -9,6 +9,12 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.52.1] - 2026-10-21
+
+### Changed
+- Editor sensor names now match the `solvis_remote` entity names (e.g. S9 "Heizungspuffer unten" instead of "Speicher Mitte", S3 "Speicherreferenz" instead of "Speicher unten").
+- The S17 solar flow shows correct values with `solvis_remote` 1.3.2; earlier versions delivered the hot water flow there.
+
 ## [0.52.0] - 2026-10-21
 
 ### Changed

@@ -9,6 +9,13 @@ All notable changes to this project are documented in this file and in GitHub Re
 ### Changed
 - No changes yet.
 
+## [0.51.0] - 2026-10-21
+
+### Added
+- Added `custom:solvis-remote-card`: live Solvis display with touch (tap and hold) and the two hardware buttons, modelled on the controller's `remote.html`. Requires `solvis_remote` 1.3.0 (display camera and admin services).
+- Each press sends a gesture id with `touch_down`/`touch_up`, so a release only ends its own touch.
+- The card polls only while visible and pauses in hidden tabs.
+
 ## [0.50.2] - 2026-03-07
 
 ### Added

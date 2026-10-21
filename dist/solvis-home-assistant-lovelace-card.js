@@ -2,7 +2,7 @@
 
 const CARD_TYPE = "solvis-home-assistant-lovelace-card";
 const CARD_NAME = "Solvis Home Assistant Lovelace Card";
-const CARD_VERSION = "0.50.2";
+const CARD_VERSION = "0.51.0";
 
 function detectScriptBasePath() {
   if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") {
@@ -2120,8 +2120,355 @@ class SolvisHomeAssistantLovelaceCardEditor extends HTMLElement {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Remote display card: the controller display from solvis_remote's camera,
+// operated like the controller's own remote.html page.
+// ---------------------------------------------------------------------------
+
+const REMOTE_CARD_TYPE = "solvis-remote-card";
+const REMOTE_CARD_NAME = "Solvis Remote Display";
+const REMOTE_EDITOR_TYPE = "solvis-remote-card-editor";
+// display.bmp is 240x128; Touch.CGI takes the display shown at double size.
+const REMOTE_DISPLAY = { width: 240, height: 128, touchScale: 2 };
+// Like remote.html: next frame 500 ms after the last one arrived, retry after 2 s.
+const REMOTE_FRAME_DELAY_MS = 500;
+const REMOTE_ERROR_DELAY_MS = 2000;
+
+const REMOTE_I18N = {
+  en: {
+    no_entity: "Select the Solvis display camera (camera.*_display) in the card settings.",
+    unavailable: "Display not reachable",
+    failed: "Command failed",
+    left: "Left button",
+    right: "Right button",
+    entity: "Display camera",
+    title: "Title (optional)",
+  },
+  de: {
+    no_entity: "In den Karteneinstellungen die Solvis-Display-Kamera (camera.*_display) waehlen.",
+    unavailable: "Display nicht erreichbar",
+    failed: "Befehl fehlgeschlagen",
+    left: "Linke Taste",
+    right: "Rechte Taste",
+    entity: "Display-Kamera",
+    title: "Titel (optional)",
+  },
+};
+
+function remoteT(hass, key) {
+  const lang = resolveLanguage(hass);
+  return (REMOTE_I18N[lang] || REMOTE_I18N.en)[key] || REMOTE_I18N.en[key] || key;
+}
+
+function normalizeRemoteConfig(config) {
+  return {
+    entity: typeof config?.entity === "string" ? config.entity.trim() : "",
+    title: typeof config?.title === "string" ? config.title : "",
+  };
+}
+
+// Pointer position inside the shown display -> Touch.CGI coordinates.
+function remoteTouchPoint(offsetX, offsetY, width, height) {
+  if (!(width > 0) || !(height > 0)) return null;
+  const spanX = REMOTE_DISPLAY.width * REMOTE_DISPLAY.touchScale;
+  const spanY = REMOTE_DISPLAY.height * REMOTE_DISPLAY.touchScale;
+  const x = Math.floor((offsetX / width) * spanX);
+  const y = Math.floor((offsetY / height) * spanY);
+  return {
+    x: Math.min(spanX - 1, Math.max(0, x)),
+    y: Math.min(spanY - 1, Math.max(0, y)),
+  };
+}
+
+// The camera's entity_picture carries its rotating access token.
+function remoteFrameUrl(stateObj, nonce) {
+  const picture = stateObj?.attributes?.entity_picture;
+  if (!picture || stateObj.state === "unavailable") return "";
+  return `${picture}${picture.includes("?") ? "&" : "?"}t=${nonce}`;
+}
+
+// Pairs touch_down with its touch_up, so a release only ends its own touch.
+function newGestureId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function findSolvisDisplayCamera(hass) {
+  const entities = hass?.entities || {};
+  const match = Object.keys(entities).find(
+    (entityId) => entityId.startsWith("camera.") && entities[entityId]?.platform === "solvis_remote",
+  );
+  return match || "";
+}
+
+class SolvisRemoteCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = normalizeRemoteConfig({});
+    this._hass = undefined;
+    this._domReady = false;
+    this._displayEl = null;
+    this._frameEl = null;
+    this._statusEl = null;
+    this._timer = null;
+    this._loading = false;
+    this._pressed = false;
+    this._gestureId = "";
+    this._intersecting = true;
+    this._observer = null;
+    this._boundVisibility = () => this._schedule(0);
+    this._boundPointerDown = (ev) => this._onPointerDown(ev);
+    this._boundPointerUp = () => this._onPointerUp();
+  }
+
+  static getStubConfig(hass) {
+    return { type: `custom:${REMOTE_CARD_TYPE}`, entity: findSolvisDisplayCamera(hass) };
+  }
+
+  static getConfigElement() {
+    return document.createElement(REMOTE_EDITOR_TYPE);
+  }
+
+  setConfig(config) {
+    if (!config || config.type !== `custom:${REMOTE_CARD_TYPE}`) {
+      throw new Error(`Invalid configuration for ${REMOTE_CARD_TYPE}`);
+    }
+    this._config = normalizeRemoteConfig(config);
+    this._domReady = false;
+    this._render();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first || !this._domReady) this._render();
+    if (first) this._schedule(0);
+  }
+
+  getCardSize() {
+    return 4;
+  }
+
+  connectedCallback() {
+    document.addEventListener?.("visibilitychange", this._boundVisibility);
+    if (typeof IntersectionObserver !== "undefined" && !this._observer) {
+      this._observer = new IntersectionObserver((entries) => {
+        this._intersecting = entries.some((entry) => entry.isIntersecting);
+        this._schedule(0);
+      });
+      this._observer.observe(this);
+    }
+    this._schedule(0);
+  }
+
+  disconnectedCallback() {
+    document.removeEventListener?.("visibilitychange", this._boundVisibility);
+    this._observer?.disconnect();
+    this._observer = null;
+    clearTimeout(this._timer);
+    this._timer = null;
+    this._onPointerUp();
+  }
+
+  _shouldPoll() {
+    return Boolean(
+      this.isConnected !== false
+      && this._hass
+      && this._config.entity
+      && this._intersecting
+      && (typeof document === "undefined" || document.visibilityState !== "hidden"),
+    );
+  }
+
+  _schedule(delay) {
+    clearTimeout(this._timer);
+    this._timer = null;
+    if (!this._shouldPoll()) return;
+    this._timer = setTimeout(() => this._loadFrame(), delay);
+  }
+
+  _loadFrame() {
+    this._timer = null;
+    if (this._loading || !this._shouldPoll() || !this._frameEl) return;
+    const url = remoteFrameUrl(this._hass.states?.[this._config.entity], Date.now());
+    if (!url) {
+      this._setStatus(remoteT(this._hass, "unavailable"));
+      this._schedule(REMOTE_ERROR_DELAY_MS);
+      return;
+    }
+    // Load off-screen and swap, so the shown frame never goes blank.
+    const preload = new Image();
+    this._loading = true;
+    preload.onload = () => {
+      this._loading = false;
+      if (this._frameEl) this._frameEl.src = preload.src;
+      this._setStatus("");
+      this._schedule(REMOTE_FRAME_DELAY_MS);
+    };
+    preload.onerror = () => {
+      this._loading = false;
+      this._setStatus(remoteT(this._hass, "unavailable"));
+      this._schedule(REMOTE_ERROR_DELAY_MS);
+    };
+    preload.src = url;
+  }
+
+  _setStatus(text) {
+    if (this._statusEl) this._statusEl.textContent = text;
+  }
+
+  _call(service, data) {
+    return this._hass
+      .callService("solvis_remote", service, { entity_id: this._config.entity, ...data })
+      .catch((err) => {
+        this._setStatus(`${remoteT(this._hass, "failed")}: ${err?.message || err}`);
+        throw err;
+      });
+  }
+
+  _onPointerDown(ev) {
+    if (this._pressed || !this._hass || !this._config.entity || !this._displayEl) return;
+    ev.preventDefault?.();
+    const rect = this._displayEl.getBoundingClientRect();
+    const point = remoteTouchPoint(ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height);
+    if (!point) return;
+    this._pressed = true;
+    const gestureId = newGestureId();
+    this._gestureId = gestureId;
+    this._displayEl.setPointerCapture?.(ev.pointerId);
+    this._call("touch_down", { ...point, gesture_id: gestureId }).catch(() => {
+      if (this._gestureId === gestureId) this._pressed = false;
+    });
+  }
+
+  _onPointerUp() {
+    if (!this._pressed) return;
+    this._pressed = false;
+    // The integration keeps the minimum hold of the native page.
+    this._call("touch_up", { gesture_id: this._gestureId }).catch(() => {});
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+    const hass = this._hass;
+    const title = this._config.title;
+    if (!this._config.entity) {
+      this.shadowRoot.innerHTML = `<ha-card${title ? ` header="${title.replace(/"/g, "&quot;")}"` : ""}>
+        <div class="hint">${remoteT(hass, "no_entity")}</div></ha-card>${REMOTE_STYLE}`;
+      this._domReady = Boolean(hass);
+      this._displayEl = null;
+      this._frameEl = null;
+      return;
+    }
+    this.shadowRoot.innerHTML = `<ha-card${title ? ` header="${title.replace(/"/g, "&quot;")}"` : ""}>
+      <div class="remote">
+        <div class="display" role="img"><img class="frame" alt="" draggable="false"></div>
+        <div class="buttons">
+          <button class="hw" data-button="links" title="${remoteT(hass, "left")}" aria-label="${remoteT(hass, "left")}"></button>
+          <button class="hw" data-button="rechts" title="${remoteT(hass, "right")}" aria-label="${remoteT(hass, "right")}"></button>
+        </div>
+        <div class="status" aria-live="polite"></div>
+      </div></ha-card>${REMOTE_STYLE}`;
+    this._displayEl = this.shadowRoot.querySelector(".display");
+    this._frameEl = this.shadowRoot.querySelector("img.frame");
+    this._statusEl = this.shadowRoot.querySelector(".status");
+    if (this._displayEl) {
+      this._displayEl.addEventListener("pointerdown", this._boundPointerDown);
+      for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+        this._displayEl.addEventListener(type, this._boundPointerUp);
+      }
+      this._displayEl.addEventListener("contextmenu", (ev) => ev.preventDefault?.());
+    }
+    for (const button of this.shadowRoot.querySelectorAll("button.hw")) {
+      button.addEventListener("click", () => this._call("press_button", { button: button.dataset.button }).catch(() => {}));
+    }
+    this._domReady = Boolean(hass);
+  }
+}
+
+const REMOTE_STYLE = `<style>
+  ha-card { overflow: hidden; }
+  .remote { padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .display {
+    width: 100%; max-width: 720px; aspect-ratio: 240 / 128;
+    background: #1e1e1e; border: 6px solid #2b2b2b; border-radius: 6px;
+    cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .display img { width: 100%; height: 100%; display: block; image-rendering: pixelated; pointer-events: none; }
+  .buttons { width: 100%; max-width: 720px; display: flex; justify-content: space-between; }
+  .hw {
+    width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--divider-color, #888);
+    background: var(--secondary-background-color, #eee); cursor: pointer;
+  }
+  .hw:active { filter: brightness(0.85); }
+  .status { min-height: 1.2em; font-size: 0.9em; color: var(--error-color, #c62828); }
+  .hint { padding: 16px; color: var(--secondary-text-color); }
+</style>`;
+
+class SolvisRemoteCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = { type: `custom:${REMOTE_CARD_TYPE}` };
+    this._hass = undefined;
+    this._picker = null;
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._picker) this._picker.hass = hass;
+    else this._render();
+  }
+
+  _changed(patch) {
+    this._config = { ...this._config, ...patch };
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._hass) return;
+    this.shadowRoot.innerHTML = `
+      <div class="editor">
+        <ha-entity-picker class="entity" data-group="remote" data-key="entity" label="${remoteT(this._hass, "entity")}"></ha-entity-picker>
+        <ha-textfield class="title" label="${remoteT(this._hass, "title")}"></ha-textfield>
+      </div>
+      <style>.editor { display: grid; gap: 12px; }</style>`;
+    const picker = this.shadowRoot.querySelector("ha-entity-picker");
+    if (picker) {
+      picker.hass = this._hass;
+      picker.value = this._config.entity || "";
+      picker.includeDomains = ["camera"];
+      picker.addEventListener("value-changed", (ev) => this._changed({ entity: ev.detail?.value || "" }));
+      this._picker = picker;
+    }
+    const titleField = this.shadowRoot.querySelector("ha-textfield");
+    if (titleField) {
+      titleField.value = this._config.title || "";
+      titleField.addEventListener("change", (ev) => this._changed({ title: ev.target?.value || "" }));
+    }
+  }
+}
+
 if (!customElements.get(CARD_TYPE)) {
   customElements.define(CARD_TYPE, SolvisHomeAssistantLovelaceCard);
+}
+
+if (!customElements.get(REMOTE_CARD_TYPE)) {
+  customElements.define(REMOTE_CARD_TYPE, SolvisRemoteCard);
+}
+
+if (!customElements.get(REMOTE_EDITOR_TYPE)) {
+  customElements.define(REMOTE_EDITOR_TYPE, SolvisRemoteCardEditor);
 }
 
 if (!customElements.get("solvis-home-assistant-lovelace-card-editor")) {
@@ -2139,6 +2486,16 @@ if (!window.customCards.some((card) => card.type === CARD_TYPE)) {
     preview: true,
   });
 }
+if (!window.customCards.some((card) => card.type === REMOTE_CARD_TYPE)) {
+  window.customCards.push({
+    type: REMOTE_CARD_TYPE,
+    name: REMOTE_CARD_NAME,
+    description: "Live Solvis controller display with touch and buttons, like the native remote page.",
+    icon: CARD_ICON_URL,
+    documentationURL: "https://github.com/othorg/solvis-home-assistant-lovelace-card",
+    preview: false,
+  });
+}
 
 console.info(`%c${CARD_NAME} %c${CARD_VERSION}`, "color:#0b75b7;font-weight:700", "color:#666;font-weight:400");
 
@@ -2153,5 +2510,14 @@ if (typeof process !== "undefined" && process?.env?.SOLVIS_CARD_TEST === "1") {
     buildSystemEntityMap,
     SolvisHomeAssistantLovelaceCard,
     SolvisHomeAssistantLovelaceCardEditor,
+    REMOTE_CARD_TYPE,
+    REMOTE_DISPLAY,
+    normalizeRemoteConfig,
+    remoteTouchPoint,
+    remoteFrameUrl,
+    newGestureId,
+    findSolvisDisplayCamera,
+    SolvisRemoteCard,
+    SolvisRemoteCardEditor,
   };
 }

@@ -113,6 +113,24 @@ Binary overlays also distinguish `off` vs `unavailable` visually:
 
 `custom:solvis-home-assistant-lovelace-card`
 
+## Remote Display Card
+
+`custom:solvis-remote-card` shows the controller display live and lets you operate it like the controller's own remote page (`remote.html`): tap or hold on the display, and press the two buttons below it.
+
+```yaml
+type: custom:solvis-remote-card
+entity: camera.solvis_system_display
+title: Solvis
+```
+
+Requirements (integration [`solvis_remote`](https://github.com/othorg/solvis-ha-integration) 1.3.0 or newer):
+
+- the display camera of the integration (`camera.*_display`)
+- *CGI control* enabled in the integration options
+- an admin user (the touch and button services are admin-only)
+
+Like the native page, the card loads the next frame 500 ms after the previous one and pauses while it is not visible. The controller serves a single session, which the integration holds; opening the native page in a browser at the same time does not work.
+
 ## Tests
 
 Run the lightweight Node.js test suite:

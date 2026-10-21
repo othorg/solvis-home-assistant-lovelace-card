@@ -1188,3 +1188,95 @@ test("long press triggers hold action instead of tap action", async () => {
 
   assert.equal(JSON.stringify(calls), JSON.stringify(["hold"]));
 });
+
+// ---------------------------------------------------------------------------
+// Remote display card
+// ---------------------------------------------------------------------------
+
+test("remote card maps pointer positions to Touch.CGI coordinates", () => {
+  const { remoteTouchPoint } = loadCardRuntime();
+  // Shown at the native double size: 1:1.
+  assert.deepEqual({ ...remoteTouchPoint(0, 0, 480, 256) }, { x: 0, y: 0 });
+  assert.deepEqual({ ...remoteTouchPoint(253, 215, 480, 256) }, { x: 253, y: 215 });
+  // Shown larger or smaller: scaled.
+  assert.deepEqual({ ...remoteTouchPoint(240, 128, 960, 512) }, { x: 120, y: 64 });
+  assert.deepEqual({ ...remoteTouchPoint(120, 64, 240, 128) }, { x: 240, y: 128 });
+  // Edges stay inside 0..479 / 0..255.
+  assert.deepEqual({ ...remoteTouchPoint(480, 256, 480, 256) }, { x: 479, y: 255 });
+  assert.deepEqual({ ...remoteTouchPoint(-5, -5, 480, 256) }, { x: 0, y: 0 });
+  assert.equal(remoteTouchPoint(10, 10, 0, 0), null);
+});
+
+test("remote card frame URL keeps the camera token and busts the cache", () => {
+  const { remoteFrameUrl } = loadCardRuntime();
+  const state = { state: "idle", attributes: { entity_picture: "/api/camera_proxy/camera.solvis_display?token=abc" } };
+  assert.equal(remoteFrameUrl(state, 42), "/api/camera_proxy/camera.solvis_display?token=abc&t=42");
+  assert.equal(remoteFrameUrl({ state: "unavailable", attributes: state.attributes }, 1), "");
+  assert.equal(remoteFrameUrl(undefined, 1), "");
+});
+
+test("remote card config and stub find the solvis_remote camera", () => {
+  const { normalizeRemoteConfig, findSolvisDisplayCamera, SolvisRemoteCard, REMOTE_CARD_TYPE } = loadCardRuntime();
+  assert.equal(normalizeRemoteConfig({ entity: " camera.x " }).entity, "camera.x");
+  assert.equal(normalizeRemoteConfig(undefined).entity, "");
+  const hass = {
+    entities: {
+      "camera.front_door": { platform: "reolink" },
+      "camera.solvis_system_display": { platform: "solvis_remote" },
+    },
+  };
+  assert.equal(findSolvisDisplayCamera(hass), "camera.solvis_system_display");
+  assert.equal(SolvisRemoteCard.getStubConfig(hass).type, `custom:${REMOTE_CARD_TYPE}`);
+  assert.equal(SolvisRemoteCard.getStubConfig(hass).entity, "camera.solvis_system_display");
+  assert.throws(() => new SolvisRemoteCard().setConfig({ type: "custom:other" }));
+});
+
+test("remote card sends touch_down and the matching touch_up", async () => {
+  const { SolvisRemoteCard, REMOTE_CARD_TYPE } = loadCardRuntime();
+  const card = new SolvisRemoteCard();
+  card.setConfig({ type: `custom:${REMOTE_CARD_TYPE}`, entity: "camera.solvis_system_display" });
+  const calls = [];
+  card._hass = {
+    callService: (domain, service, data) => {
+      calls.push({ domain, service, data });
+      return Promise.resolve();
+    },
+  };
+  let captured = null;
+  card._displayEl = {
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 960, height: 512 }),
+    setPointerCapture: (id) => {
+      captured = id;
+    },
+  };
+  let prevented = false;
+  card._onPointerDown({ clientX: 10 + 240, clientY: 20 + 128, pointerId: 7, preventDefault: () => { prevented = true; } });
+  // A second pointer while pressed is ignored.
+  card._onPointerDown({ clientX: 0, clientY: 0, pointerId: 8, preventDefault() {} });
+  card._onPointerUp();
+  card._onPointerUp();
+  await Promise.resolve();
+
+  assert.ok(prevented);
+  assert.equal(captured, 7);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].service, "touch_down");
+  assert.equal(calls[0].data.entity_id, "camera.solvis_system_display");
+  assert.equal(calls[0].data.x, 120);
+  assert.equal(calls[0].data.y, 64);
+  assert.ok(calls[0].data.gesture_id);
+  assert.equal(calls[1].service, "touch_up");
+  assert.equal(calls[1].data.gesture_id, calls[0].data.gesture_id);
+});
+
+test("remote card does not poll without an entity", () => {
+  const { SolvisRemoteCard, REMOTE_CARD_TYPE } = loadCardRuntime();
+  const card = new SolvisRemoteCard();
+  card.setConfig({ type: `custom:${REMOTE_CARD_TYPE}` });
+  card._hass = { states: {} };
+  assert.equal(card._shouldPoll(), false);
+  card.setConfig({ type: `custom:${REMOTE_CARD_TYPE}`, entity: "camera.solvis_system_display" });
+  assert.equal(card._shouldPoll(), true);
+  card._intersecting = false;
+  assert.equal(card._shouldPoll(), false, "hidden cards must not poll the controller");
+});
